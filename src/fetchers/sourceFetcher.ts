@@ -1,5 +1,5 @@
 import { POLICY } from "../lib/policy";
-import { sha256OfBytes, type Sha256 } from "../lib/hash";
+import { sha256Hex, sha256OfBytes, type Sha256 } from "../lib/hash";
 
 export type FetchUrlResult = {
   kind: "url";
@@ -11,7 +11,7 @@ export type FetchUrlResult = {
   error: string | null;
 };
 
-export type HashTextResult = {
+type HashTextResult = {
   kind: "text";
   contentSha256: Sha256;
   text: string;
@@ -44,16 +44,10 @@ export async function fetchUrl(url: string, opts: FetchUrlOpts = {}): Promise<Fe
       const res = await fetch(url, { signal: controller.signal, headers: { "user-agent": userAgent } });
       if (!res.ok) {
         lastError = `http_${res.status}`;
-        // Retry only on 5xx
-        if (res.status >= 500 && attempt < retries) {
-          // consume body so connection can be released
-          try { await res.body?.cancel(); } catch { /* ignore */ }
-          continue;
-        }
-        try { await res.body?.cancel(); } catch { /* ignore */ }
-        return { kind: "url", url, contentSha256: null, text: "", fetchedAt, byteLength: 0, error: lastError };
+        await res.body?.cancel().catch(() => {});
+        if (res.status >= 500 && attempt < retries) continue;
+        return failed(url, fetchedAt, lastError);
       }
-      // Stream with byte cap.
       const reader = res.body!.getReader();
       const chunks: Uint8Array[] = [];
       let total = 0;
@@ -69,9 +63,7 @@ export async function fetchUrl(url: string, opts: FetchUrlOpts = {}): Promise<Fe
         }
         chunks.push(value);
       }
-      if (exceeded) {
-        return { kind: "url", url, contentSha256: null, text: "", fetchedAt, byteLength: 0, error: "byte_cap_exceeded" };
-      }
+      if (exceeded) return failed(url, fetchedAt, "byte_cap_exceeded");
       const buf = new Uint8Array(total);
       let off = 0;
       for (const c of chunks) {
@@ -80,20 +72,26 @@ export async function fetchUrl(url: string, opts: FetchUrlOpts = {}): Promise<Fe
       }
       const text = new TextDecoder().decode(buf);
       return { kind: "url", url, contentSha256: sha256OfBytes(buf), text, fetchedAt, byteLength: total, error: null };
-    } catch (e: unknown) {
-      const name = (e as { name?: string } | null)?.name;
-      lastError = name === "AbortError" ? "timeout" : "network_error";
-      if (!TRANSIENT.has(lastError) || attempt >= retries) {
-        return { kind: "url", url, contentSha256: null, text: "", fetchedAt, byteLength: 0, error: lastError };
-      }
+    } catch (e) {
+      lastError = e instanceof Error && e.name === "AbortError" ? "timeout" : "network_error";
+      if (!TRANSIENT.has(lastError) || attempt >= retries) return failed(url, fetchedAt, lastError);
     } finally {
       clearTimeout(timer);
     }
   }
-  return { kind: "url", url, contentSha256: null, text: "", fetchedAt, byteLength: 0, error: lastError ?? "network_error" };
+  return failed(url, fetchedAt, lastError ?? "network_error");
+}
+
+function failed(url: string, fetchedAt: string, error: string): FetchUrlResult {
+  return { kind: "url", url, contentSha256: null, text: "", fetchedAt, byteLength: 0, error };
 }
 
 export function hashText(text: string): HashTextResult {
-  const bytes = new TextEncoder().encode(text);
-  return { kind: "text", contentSha256: sha256OfBytes(bytes), text, byteLength: bytes.length, error: null };
+  return {
+    kind: "text",
+    contentSha256: sha256Hex(text),
+    text,
+    byteLength: Buffer.byteLength(text, "utf8"),
+    error: null,
+  };
 }

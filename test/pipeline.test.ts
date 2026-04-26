@@ -9,7 +9,7 @@ import type { SynthesizeRequest } from "../src/types";
 const FIXED_TS = "2026-04-27T12:00:00.000Z";
 
 function makeDeps(overrides: Partial<RunSynthesisDeps> = {}): RunSynthesisDeps {
-  const pk = generatePrivateKey();
+  const account = privateKeyToAccount(generatePrivateKey());
   return {
     fetchUrl: async (url) => ({
       kind: "url",
@@ -30,12 +30,12 @@ function makeDeps(overrides: Partial<RunSynthesisDeps> = {}): RunSynthesisDeps {
     now: () => FIXED_TS,
     deployment: {
       appId: "0xapp",
-      agentAddress: privateKeyToAccount(pk).address,
+      agentAddress: account.address,
       imageDigest: "sha256:img",
       commitSha: "abc",
       environment: "local",
     },
-    signerPrivateKey: pk,
+    sign: (h) => account.signMessage({ message: h }),
     ...overrides,
   };
 }
@@ -164,13 +164,13 @@ describe("runSynthesis", () => {
   });
 
   test("manifestSha256 is deterministic across runs with identical deps", async () => {
-    const pk = generatePrivateKey();
+    const account = privateKeyToAccount(generatePrivateKey());
     const baseDeps = (): RunSynthesisDeps => ({
       ...makeDeps(),
-      signerPrivateKey: pk,
+      sign: (h) => account.signMessage({ message: h }),
       deployment: {
         appId: "0xapp",
-        agentAddress: privateKeyToAccount(pk).address,
+        agentAddress: account.address,
         imageDigest: "sha256:img",
         commitSha: "abc",
         environment: "local",

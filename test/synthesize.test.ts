@@ -7,7 +7,7 @@ import type { RunSynthesisDeps } from "../src/pipeline";
 const FIXED_TS = "2026-04-27T12:00:00.000Z";
 
 function makeApp(overrides: Partial<RunSynthesisDeps> = {}) {
-  const pk = generatePrivateKey();
+  const account = privateKeyToAccount(generatePrivateKey());
   const deps: RunSynthesisDeps = {
     fetchUrl: async (url) => ({
       kind: "url",
@@ -28,12 +28,12 @@ function makeApp(overrides: Partial<RunSynthesisDeps> = {}) {
     now: () => FIXED_TS,
     deployment: {
       appId: "0xapp",
-      agentAddress: privateKeyToAccount(pk).address,
+      agentAddress: account.address,
       imageDigest: "sha256:img",
       commitSha: "abc",
       environment: "local",
     },
-    signerPrivateKey: pk,
+    sign: (h) => account.signMessage({ message: h }),
     ...overrides,
   };
   return buildApp(deps);

@@ -4,20 +4,22 @@ import type { SynthesizeRequest, SynthesizeResponse } from "../types";
 
 export function makeSynthesizeHandler(deps: RunSynthesisDeps) {
   return async (req: Request, res: Response): Promise<void> => {
-    const body = req.body as Partial<SynthesizeRequest> | undefined;
+    const body = req.body as unknown;
     if (!body || typeof body !== "object") {
       res.status(400).json({ error: "body_required" });
       return;
     }
+    const b = body as Record<string, unknown>;
     const request: SynthesizeRequest = {
-      topic: typeof body.topic === "string" ? body.topic : "",
-      urls: Array.isArray(body.urls) ? body.urls.filter((u) => typeof u === "string") : undefined,
-      sources: Array.isArray(body.sources)
-        ? body.sources.filter((s) => s && typeof s === "object" && typeof s.text === "string")
-        : undefined,
+      topic: typeof b.topic === "string" ? b.topic : "",
+      ...(Array.isArray(b.urls) && { urls: b.urls.filter((u): u is string => typeof u === "string") }),
+      ...(Array.isArray(b.sources) && {
+        sources: (b.sources as unknown[]).filter(
+          (s): s is { title?: string; url?: string; text: string } =>
+            !!s && typeof s === "object" && typeof (s as Record<string, unknown>).text === "string"
+        ),
+      }),
     };
-    if (request.urls === undefined) delete request.urls;
-    if (request.sources === undefined) delete request.sources;
 
     const result = await runSynthesis(deps, request);
 

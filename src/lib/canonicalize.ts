@@ -20,11 +20,12 @@ function canonicalString(value: unknown): string {
     const parts: string[] = [];
     for (const k of keys) {
       const v = obj[k];
-      if (v === undefined) throw new Error(`canonicalize: undefined at key ${k}`);
+      if (v === undefined) continue;
       parts.push(encodeString(k) + ":" + canonicalString(v));
     }
     return "{" + parts.join(",") + "}";
   }
+  if (value === undefined) throw new Error("canonicalize: top-level undefined");
   throw new Error(`canonicalize: unsupported type ${typeof value}`);
 }
 

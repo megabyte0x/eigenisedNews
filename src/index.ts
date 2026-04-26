@@ -1,8 +1,8 @@
 import express, { type Express } from "express";
-import { privateKeyToAccount } from "viem/accounts";
 import { fetchUrl } from "./fetchers/sourceFetcher";
 import { callModel } from "./fanout/llmProxy";
 import { makeSynthesizeHandler } from "./http/synthesize";
+import { makeManifestSigner } from "./manifest/sign";
 import type { RunSynthesisDeps } from "./pipeline";
 import type { Manifest } from "./types";
 import { log } from "./lib/log";
@@ -26,41 +26,38 @@ function readPrivateKey(): `0x${string}` {
   return pk as `0x${string}`;
 }
 
+function buildProductionDeps(): RunSynthesisDeps {
+  const proxyUrl = process.env.LLM_PROXY_URL;
+  const apiKey = process.env.LLM_PROXY_API_KEY;
+  if (!proxyUrl || !apiKey) throw new Error("LLM_PROXY_URL or LLM_PROXY_API_KEY missing");
+  const { sign, address } = makeManifestSigner(readPrivateKey());
+  const deployment = readDeployment();
+  if (deployment.agentAddress === "local") deployment.agentAddress = address;
+  return {
+    fetchUrl,
+    callModel: ({ provider, model, prompt }) => callModel({ proxyUrl, apiKey, provider, model, prompt }),
+    now: () => new Date().toISOString(),
+    deployment,
+    sign,
+  };
+}
+
+function isCompleteDeps(d?: Partial<RunSynthesisDeps>): d is RunSynthesisDeps {
+  return !!(d && d.fetchUrl && d.callModel && d.now && d.deployment && d.sign);
+}
+
 export function buildApp(depsOverride?: Partial<RunSynthesisDeps>): Express {
   const app = express();
   app.use(express.json({ limit: "4mb" }));
-
   app.get("/healthz", (_req, res) => {
     res.json({ ok: true });
   });
 
-  // Deps: real adapters by default; tests inject mocks via depsOverride.
-  let deps: RunSynthesisDeps;
-  if (depsOverride && depsOverride.fetchUrl && depsOverride.callModel && depsOverride.now && depsOverride.deployment && depsOverride.signerPrivateKey) {
-    deps = depsOverride as RunSynthesisDeps;
+  if (isCompleteDeps(depsOverride)) {
+    app.post("/synthesize", makeSynthesizeHandler(depsOverride));
   } else if (process.env.NODE_ENV !== "test") {
-    const proxyUrl = process.env.LLM_PROXY_URL;
-    const apiKey = process.env.LLM_PROXY_API_KEY;
-    if (!proxyUrl || !apiKey) throw new Error("LLM_PROXY_URL or LLM_PROXY_API_KEY missing");
-    const pk = readPrivateKey();
-    const deployment = readDeployment();
-    if (deployment.agentAddress === "local") {
-      deployment.agentAddress = privateKeyToAccount(pk).address;
-    }
-    deps = {
-      fetchUrl,
-      callModel: async ({ provider, model, version, prompt }) =>
-        callModel({ proxyUrl, apiKey, provider, model, version, prompt }),
-      now: () => new Date().toISOString(),
-      deployment,
-      signerPrivateKey: pk,
-    };
-  } else {
-    // In tests with no override, /synthesize is not wired.
-    return app;
+    app.post("/synthesize", makeSynthesizeHandler(buildProductionDeps()));
   }
-
-  app.post("/synthesize", makeSynthesizeHandler(deps));
   return app;
 }
 

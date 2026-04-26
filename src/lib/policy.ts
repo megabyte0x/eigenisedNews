@@ -36,4 +36,6 @@ export const POLICY = deepFreeze({
   MAX_TOPIC_LEN: 512,
 } as const);
 
-export type Policy = typeof POLICY;
+export type ModelSpec = (typeof POLICY.MODEL_SET)[number];
+
+export const providerModelKey = (m: { provider: string; model: string }) => `${m.provider}/${m.model}`;

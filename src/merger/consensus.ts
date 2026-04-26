@@ -1,7 +1,7 @@
 import type { Claim } from "../types";
 import { normalizeClaim } from "./normalize";
 
-export type RawClaim = {
+type RawClaim = {
   statement: string;
   supportingSourceIndices: number[];
 };
@@ -17,7 +17,6 @@ export type ConsensusOutput = {
 };
 
 type ClaimGroup = {
-  normalized: string;
   canonical: string;
   models: Set<string>;
   sources: Set<number>;
@@ -37,12 +36,12 @@ export function consensus(input: ConsensusInput): ConsensusOutput {
       if (!norm) continue;
       let group = groups.get(norm);
       if (!group) {
-        group = { normalized: norm, canonical: raw.statement, models: new Set(), sources: new Set() };
+        group = { canonical: raw.statement, models: new Set(), sources: new Set() };
         groups.set(norm, group);
       } else if (raw.statement < group.canonical) {
         group.canonical = raw.statement;
       }
-      // One model can only contribute one vote per normalized claim.
+      // A model that emits the same claim twice still gets one vote.
       if (!seenInThisModel.has(norm)) {
         group.models.add(providerModel);
         seenInThisModel.add(norm);
@@ -51,7 +50,6 @@ export function consensus(input: ConsensusInput): ConsensusOutput {
     }
   }
 
-  // Order: descending support count, then canonical statement ascending.
   const ordered = [...groups.values()].sort((a, b) => {
     const byCount = b.models.size - a.models.size;
     if (byCount !== 0) return byCount;
@@ -60,22 +58,14 @@ export function consensus(input: ConsensusInput): ConsensusOutput {
 
   const consensusClaims: Claim[] = [];
   const minorityClaims: Claim[] = [];
-
   for (const g of ordered) {
-    const claim: Claim = {
-      id: "",
+    const bucket = g.models.size >= threshold ? consensusClaims : minorityClaims;
+    bucket.push({
+      id: `${g.models.size >= threshold ? "c" : "m"}${bucket.length}`,
       statement: g.canonical,
       supportingModels: [...g.models].sort(),
       supportingSourceIndices: [...g.sources].sort((a, b) => a - b),
-    };
-    if (g.models.size >= threshold) {
-      claim.id = `c${consensusClaims.length}`;
-      consensusClaims.push(claim);
-    } else {
-      claim.id = `m${minorityClaims.length}`;
-      minorityClaims.push(claim);
-    }
+    });
   }
-
   return { claims: consensusClaims, minorityClaims };
 }

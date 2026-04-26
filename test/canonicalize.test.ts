@@ -30,8 +30,11 @@ describe("canonicalize", () => {
   test("nested", () => {
     expect(enc({ z: [1, { y: 2, x: 1 }], a: null })).toBe('{"a":null,"z":[1,{"x":1,"y":2}]}');
   });
-  test("undefined is rejected", () => {
+  test("top-level undefined is rejected", () => {
     expect(() => canonicalize(undefined as any)).toThrow();
-    expect(() => canonicalize({ a: undefined } as any)).toThrow();
+  });
+  test("undefined object values are skipped (matches JSON.stringify semantics)", () => {
+    expect(enc({ a: 1, b: undefined, c: 3 } as any)).toBe('{"a":1,"c":3}');
+    expect(enc({ a: undefined } as any)).toBe("{}");
   });
 });

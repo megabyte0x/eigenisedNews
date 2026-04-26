@@ -6,7 +6,6 @@ export type CallModelArgs = {
   apiKey: string;
   provider: string;
   model: string;
-  version: string;
   prompt: string;
   retries?: number;
   timeoutMs?: number;
@@ -18,10 +17,8 @@ export type CallModelResult = {
   latencyMs: number;
 };
 
-const TRANSIENT_HTTP = (status: number) => status >= 500;
-
 export async function callModel(args: CallModelArgs): Promise<CallModelResult> {
-  const retries   = args.retries   ?? POLICY.LLM_RETRIES;
+  const retries = args.retries ?? POLICY.LLM_RETRIES;
   const timeoutMs = args.timeoutMs ?? POLICY.LLM_TIMEOUT_MS;
   const url = `${args.proxyUrl.replace(/\/$/, "")}/v1/chat/completions`;
   const body = JSON.stringify({
@@ -48,7 +45,7 @@ export async function callModel(args: CallModelArgs): Promise<CallModelResult> {
       const latencyMs = Date.now() - t0;
       if (!res.ok) {
         const err = new Error(`http_${res.status}`);
-        if (TRANSIENT_HTTP(res.status) && attempt < retries) {
+        if (res.status >= 500 && attempt < retries) {
           lastErr = err;
           continue;
         }
@@ -56,22 +53,12 @@ export async function callModel(args: CallModelArgs): Promise<CallModelResult> {
       }
       const json = (await res.json()) as { choices?: { message?: { content?: string } }[] };
       const content = json.choices?.[0]?.message?.content;
-      if (typeof content !== "string") {
-        throw new Error("malformed_response");
-      }
+      if (typeof content !== "string") throw new Error("malformed_response");
       return { rawOutput: content, latencyMs };
-    } catch (e: unknown) {
-      const err = e instanceof Error ? e : new Error(String(e));
-      const isAbort = err.name === "AbortError";
-      const isTimeout = isAbort && !args.signal?.aborted;
-      if (isTimeout) {
-        lastErr = new Error("timeout");
-      } else if (err.message.startsWith("http_")) {
-        lastErr = err;
-      } else {
-        lastErr = new Error("network_error");
-      }
-      const transient = lastErr.message === "timeout" || lastErr.message === "network_error" || lastErr.message.startsWith("http_5");
+    } catch (e) {
+      const code = classifyCallError(e, args.signal);
+      lastErr = new Error(code);
+      const transient = code === "timeout" || code === "network_error" || code.startsWith("http_5");
       if (!transient || attempt >= retries) throw lastErr;
     } finally {
       clearTimeout(timer);
@@ -79,6 +66,14 @@ export async function callModel(args: CallModelArgs): Promise<CallModelResult> {
     }
   }
   throw lastErr ?? new Error("network_error");
+}
+
+function classifyCallError(e: unknown, parentSignal: AbortSignal | undefined): string {
+  if (e instanceof Error) {
+    if (e.name === "AbortError") return parentSignal?.aborted ? "network_error" : "timeout";
+    if (e.message.startsWith("http_") || e.message === "malformed_response") return e.message;
+  }
+  return "network_error";
 }
 
 export function parseStructuredOutput(rawOutput: string): StructuredModelOutput {

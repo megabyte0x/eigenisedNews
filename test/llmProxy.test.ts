@@ -48,7 +48,7 @@ describe("callModel", () => {
     mode = "ok"; hits = 0;
     const r = await callModel({
       proxyUrl: baseUrl, apiKey: "k",
-      provider: "openai", model: "gpt-4o", version: "x",
+      provider: "openai", model: "gpt-4o",
       prompt: "hi", retries: 0, timeoutMs: 5000,
     });
     expect(r.rawOutput).toContain('"claims"');
@@ -59,7 +59,7 @@ describe("callModel", () => {
     mode = "500-then-ok"; hits = 0;
     const r = await callModel({
       proxyUrl: baseUrl, apiKey: "k",
-      provider: "openai", model: "gpt-4o", version: "x",
+      provider: "openai", model: "gpt-4o",
       prompt: "hi", retries: 1, timeoutMs: 5000,
     });
     expect(r.rawOutput).toContain('"claims"');
@@ -69,7 +69,7 @@ describe("callModel", () => {
   test("404 throws http_404 (no retry)", async () => {
     mode = "404"; hits = 0;
     await expect(
-      callModel({ proxyUrl: baseUrl, apiKey: "k", provider: "openai", model: "gpt-4o", version: "x", prompt: "hi", retries: 1, timeoutMs: 5000 })
+      callModel({ proxyUrl: baseUrl, apiKey: "k", provider: "openai", model: "gpt-4o", prompt: "hi", retries: 1, timeoutMs: 5000 })
     ).rejects.toThrow(/http_404/);
     expect(hits).toBe(1);
   });
@@ -77,14 +77,14 @@ describe("callModel", () => {
   test("timeout throws 'timeout'", async () => {
     mode = "hang"; hits = 0;
     await expect(
-      callModel({ proxyUrl: baseUrl, apiKey: "k", provider: "openai", model: "gpt-4o", version: "x", prompt: "hi", retries: 0, timeoutMs: 200 })
+      callModel({ proxyUrl: baseUrl, apiKey: "k", provider: "openai", model: "gpt-4o", prompt: "hi", retries: 0, timeoutMs: 200 })
     ).rejects.toThrow(/timeout/);
   });
 
   test("500 with retries=0 fails fast", async () => {
     mode = "500"; hits = 0;
     await expect(
-      callModel({ proxyUrl: baseUrl, apiKey: "k", provider: "openai", model: "gpt-4o", version: "x", prompt: "hi", retries: 0, timeoutMs: 5000 })
+      callModel({ proxyUrl: baseUrl, apiKey: "k", provider: "openai", model: "gpt-4o", prompt: "hi", retries: 0, timeoutMs: 5000 })
     ).rejects.toThrow(/http_500/);
     expect(hits).toBe(1);
   });

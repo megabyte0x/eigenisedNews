@@ -9,7 +9,7 @@ const FIXED_TS = "2026-04-27T12:00:00.000Z";
 let goodResponse: SynthesizeResponse;
 
 beforeAll(async () => {
-  const pk = generatePrivateKey();
+  const account = privateKeyToAccount(generatePrivateKey());
   const deps: RunSynthesisDeps = {
     fetchUrl: async (url) => ({
       kind: "url",
@@ -30,12 +30,12 @@ beforeAll(async () => {
     now: () => FIXED_TS,
     deployment: {
       appId: "0xapp",
-      agentAddress: privateKeyToAccount(pk).address,
+      agentAddress: account.address,
       imageDigest: "sha256:img",
       commitSha: "abc",
       environment: "local",
     },
-    signerPrivateKey: pk,
+    sign: (h) => account.signMessage({ message: h }),
   };
   const r = await runSynthesis(deps, { topic: "t", sources: [{ text: "src" }] });
   if (r.status !== "ok") throw new Error("setup: synthesis did not succeed");
@@ -82,8 +82,8 @@ describe("verifyResponse — tampered fixtures", () => {
     // Edit a non-hashed-into-itself field, then recompute hash to make hash check pass — but signature was over old hash, so recovery fails.
     tampered.manifest.brief = "tampered brief";
     // Recompute the hash so manifest_hash passes
-    const { recomputeManifestHash } = await import("../src/verifier/verify");
-    tampered.manifest.manifestSha256 = recomputeManifestHash(tampered.manifest);
+    const { hashManifestWithPlaceholder } = await import("../src/manifest/build");
+    tampered.manifest.manifestSha256 = hashManifestWithPlaceholder(tampered.manifest);
     const results = await verifyResponse(tampered);
     expect(results.find((r) => r.name === "manifest_hash")?.status).toBe("pass");
     expect(results.find((r) => r.name === "signature")?.status).toBe("fail");
