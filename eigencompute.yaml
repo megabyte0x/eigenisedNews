@@ -1,0 +1,22 @@
+name: eigenised-news
+version: 0.1.0
+image: eigenised-news:dev
+runtime:
+  vcpu: 4
+  memoryMiB: 8192
+endpoints:
+  - name: synthesize
+    method: POST
+    path: /synthesize
+  - name: healthz
+    method: GET
+    path: /healthz
+env:
+  - key: LLM_PROXY_URL
+    fromSecret: llm_proxy_url
+  - key: LLM_PROXY_API_KEY
+    fromSecret: llm_proxy_api_key
+appWallet:
+  bindEnv:
+    privateKey: AGENT_PRIVATE_KEY
+    address: AGENT_ID
