@@ -1,15 +1,16 @@
+import { generateText } from "ai";
+import { eigen, createEigenGateway, type EigenGatewayLanguageModel } from "@layr-labs/ai-gateway-provider";
 import { POLICY } from "../lib/policy";
 import type { StructuredModelOutput } from "../types";
 
 export type CallModelArgs = {
-  proxyUrl: string;
-  apiKey: string;
   provider: string;
   model: string;
   prompt: string;
   retries?: number;
   timeoutMs?: number;
   signal?: AbortSignal;
+  modelFactory?: (modelId: string) => EigenGatewayLanguageModel;
 };
 
 export type CallModelResult = {
@@ -20,13 +21,8 @@ export type CallModelResult = {
 export async function callModel(args: CallModelArgs): Promise<CallModelResult> {
   const retries = args.retries ?? POLICY.LLM_RETRIES;
   const timeoutMs = args.timeoutMs ?? POLICY.LLM_TIMEOUT_MS;
-  const url = `${args.proxyUrl.replace(/\/$/, "")}/v1/chat/completions`;
-  const body = JSON.stringify({
-    provider: args.provider,
-    model: args.model,
-    messages: [{ role: "user", content: args.prompt }],
-    temperature: POLICY.LLM_TEMPERATURE,
-  });
+  const factory = args.modelFactory ?? eigen;
+  const modelId = `${args.provider}/${args.model}`;
 
   let lastErr: Error | null = null;
   for (let attempt = 0; attempt <= retries; attempt++) {
@@ -36,25 +32,15 @@ export async function callModel(args: CallModelArgs): Promise<CallModelResult> {
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     const t0 = Date.now();
     try {
-      const res = await fetch(url, {
-        method: "POST",
-        headers: { "content-type": "application/json", authorization: `Bearer ${args.apiKey}` },
-        body,
-        signal: controller.signal,
+      const result = await generateText({
+        model: factory(modelId),
+        prompt: args.prompt,
+        temperature: POLICY.LLM_TEMPERATURE,
+        abortSignal: controller.signal,
       });
       const latencyMs = Date.now() - t0;
-      if (!res.ok) {
-        const err = new Error(`http_${res.status}`);
-        if (res.status >= 500 && attempt < retries) {
-          lastErr = err;
-          continue;
-        }
-        throw err;
-      }
-      const json = (await res.json()) as { choices?: { message?: { content?: string } }[] };
-      const content = json.choices?.[0]?.message?.content;
-      if (typeof content !== "string") throw new Error("malformed_response");
-      return { rawOutput: content, latencyMs };
+      if (typeof result.text !== "string") throw new Error("malformed_response");
+      return { rawOutput: result.text, latencyMs };
     } catch (e) {
       const code = classifyCallError(e, args.signal);
       lastErr = new Error(code);
@@ -72,8 +58,20 @@ function classifyCallError(e: unknown, parentSignal: AbortSignal | undefined): s
   if (e instanceof Error) {
     if (e.name === "AbortError") return parentSignal?.aborted ? "network_error" : "timeout";
     if (e.message.startsWith("http_") || e.message === "malformed_response") return e.message;
+    const eigenMatch = e.message.match(/Eigen Gateway API error \((\d+)\)/);
+    if (eigenMatch) return `http_${eigenMatch[1]}`;
+    const status = (e as { statusCode?: number }).statusCode;
+    if (typeof status === "number") return `http_${status}`;
   }
   return "network_error";
+}
+
+/**
+ * Build a model factory that targets a specific gateway base URL with a custom fetch.
+ * Used by tests (mock fetch) and by local dev (no JWT auth needed against ai-gateway-dev).
+ */
+export function makeTestFactory(opts: { baseURL: string; fetch?: typeof fetch }): (modelId: string) => EigenGatewayLanguageModel {
+  return createEigenGateway({ baseURL: opts.baseURL, fetch: opts.fetch });
 }
 
 export function parseStructuredOutput(rawOutput: string): StructuredModelOutput {

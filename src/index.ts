@@ -27,15 +27,12 @@ function readPrivateKey(): `0x${string}` {
 }
 
 function buildProductionDeps(): RunSynthesisDeps {
-  const proxyUrl = process.env.LLM_PROXY_URL;
-  const apiKey = process.env.LLM_PROXY_API_KEY;
-  if (!proxyUrl || !apiKey) throw new Error("LLM_PROXY_URL or LLM_PROXY_API_KEY missing");
   const { sign, address } = makeManifestSigner(readPrivateKey());
   const deployment = readDeployment();
   if (deployment.agentAddress === "local") deployment.agentAddress = address;
   return {
     fetchUrl,
-    callModel: ({ provider, model, prompt }) => callModel({ proxyUrl, apiKey, provider, model, prompt }),
+    callModel: ({ provider, model, prompt }) => callModel({ provider, model, prompt }),
     now: () => new Date().toISOString(),
     deployment,
     sign,

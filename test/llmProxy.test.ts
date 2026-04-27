@@ -1,7 +1,7 @@
 import { describe, test, expect, beforeAll, afterAll } from "vitest";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
-import { callModel, parseStructuredOutput } from "../src/fanout/llmProxy";
+import { callModel, parseStructuredOutput, makeTestFactory } from "../src/fanout/llmProxy";
 
 let server: http.Server;
 let baseUrl: string;
@@ -10,7 +10,7 @@ let hits = 0;
 
 beforeAll(async () => {
   server = http.createServer((req, res) => {
-    if (req.url !== "/v1/chat/completions") {
+    if (!req.url?.includes("/chat/completions") && !req.url?.includes("/v1/")) {
       res.writeHead(404);
       res.end();
       return;
@@ -32,7 +32,7 @@ beforeAll(async () => {
     if (mode === "prose") content = "Sure! Here is the JSON:\n" + content;
     if (mode === "bad-types") content = '{"claims":[{"statement":"a","supportingSourceIndices":["zero"]}],"summary":"s"}';
     res.writeHead(200, { "content-type": "application/json" });
-    res.end(JSON.stringify({ id: "x", model: "test", choices: [{ message: { role: "assistant", content } }] }));
+    res.end(JSON.stringify({ id: "x", model: "test", choices: [{ message: { role: "assistant", content }, finish_reason: "stop" }] }));
   });
   await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
   const { port } = server.address() as AddressInfo;
@@ -43,13 +43,15 @@ afterAll(async () => {
   await new Promise<void>((r) => server.close(() => r()));
 });
 
+const factory = () => makeTestFactory({ baseURL: baseUrl });
+
 describe("callModel", () => {
   test("happy path returns rawOutput and latencyMs", async () => {
     mode = "ok"; hits = 0;
     const r = await callModel({
-      proxyUrl: baseUrl, apiKey: "k",
-      provider: "openai", model: "gpt-4o",
+      provider: "anthropic", model: "claude-sonnet-4.6",
       prompt: "hi", retries: 0, timeoutMs: 5000,
+      modelFactory: factory(),
     });
     expect(r.rawOutput).toContain('"claims"');
     expect(typeof r.latencyMs).toBe("number");
@@ -58,9 +60,9 @@ describe("callModel", () => {
   test("500 once then 200 succeeds via retry", async () => {
     mode = "500-then-ok"; hits = 0;
     const r = await callModel({
-      proxyUrl: baseUrl, apiKey: "k",
-      provider: "openai", model: "gpt-4o",
+      provider: "anthropic", model: "claude-sonnet-4.6",
       prompt: "hi", retries: 1, timeoutMs: 5000,
+      modelFactory: factory(),
     });
     expect(r.rawOutput).toContain('"claims"');
     expect(hits).toBe(2);
@@ -69,23 +71,23 @@ describe("callModel", () => {
   test("404 throws http_404 (no retry)", async () => {
     mode = "404"; hits = 0;
     await expect(
-      callModel({ proxyUrl: baseUrl, apiKey: "k", provider: "openai", model: "gpt-4o", prompt: "hi", retries: 1, timeoutMs: 5000 })
-    ).rejects.toThrow(/http_404/);
+      callModel({ provider: "anthropic", model: "claude-sonnet-4.6", prompt: "hi", retries: 1, timeoutMs: 5000, modelFactory: factory() })
+    ).rejects.toThrow(/http_/);
     expect(hits).toBe(1);
   });
 
   test("timeout throws 'timeout'", async () => {
     mode = "hang"; hits = 0;
     await expect(
-      callModel({ proxyUrl: baseUrl, apiKey: "k", provider: "openai", model: "gpt-4o", prompt: "hi", retries: 0, timeoutMs: 200 })
+      callModel({ provider: "anthropic", model: "claude-sonnet-4.6", prompt: "hi", retries: 0, timeoutMs: 200, modelFactory: factory() })
     ).rejects.toThrow(/timeout/);
   });
 
   test("500 with retries=0 fails fast", async () => {
     mode = "500"; hits = 0;
     await expect(
-      callModel({ proxyUrl: baseUrl, apiKey: "k", provider: "openai", model: "gpt-4o", prompt: "hi", retries: 0, timeoutMs: 5000 })
-    ).rejects.toThrow(/http_500/);
+      callModel({ provider: "anthropic", model: "claude-sonnet-4.6", prompt: "hi", retries: 0, timeoutMs: 5000, modelFactory: factory() })
+    ).rejects.toThrow(/http_/);
     expect(hits).toBe(1);
   });
 });

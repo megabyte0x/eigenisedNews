@@ -15,10 +15,10 @@ export const POLICY = deepFreeze({
   SCHEMA_VERSION: "1",
 
   MODEL_SET: [
-    { provider: "openai",    model: "gpt-4o",            version: "2024-08-06" },
-    { provider: "anthropic", model: "claude-sonnet-4-6", version: "2026-01-15" },
-    { provider: "google",    model: "gemini-2.5-pro",    version: "2025-11-01" },
-    { provider: "xai",       model: "grok-4",            version: "2026-02-01" },
+    { provider: "anthropic", model: "claude-sonnet-4.6", version: "v1" },
+    { provider: "anthropic", model: "claude-opus-4.7",   version: "v1" },
+    { provider: "openai",    model: "gpt-4o",             version: "v1" },
+    { provider: "google",    model: "gemini-2.5-pro",     version: "v1" },
   ],
   MIN_SUCCESS_COUNT: 3,
 

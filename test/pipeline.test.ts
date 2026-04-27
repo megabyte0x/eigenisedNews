@@ -69,7 +69,7 @@ describe("runSynthesis", () => {
   });
 
   test("mixed: 3 agree on A, 1 unique B → 1 consensus + 1 minority", async () => {
-    const oddModel = "xai/grok-4";
+    const oddModel = "google/gemini-2.5-pro";
     const deps = makeDeps({
       callModel: async ({ provider, model }) => {
         const pm = `${provider}/${model}`;

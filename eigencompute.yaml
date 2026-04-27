@@ -11,11 +11,6 @@ endpoints:
   - name: healthz
     method: GET
     path: /healthz
-env:
-  - key: LLM_PROXY_URL
-    fromSecret: llm_proxy_url
-  - key: LLM_PROXY_API_KEY
-    fromSecret: llm_proxy_api_key
 appWallet:
   bindEnv:
     privateKey: AGENT_PRIVATE_KEY
