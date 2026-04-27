@@ -2,7 +2,7 @@ import express, { type Express } from "express";
 import { hostname } from "node:os";
 import { mnemonicToAccount, privateKeyToAccount } from "viem/accounts";
 import { fetchUrl } from "./fetchers/sourceFetcher";
-import { callModel } from "./fanout/llmProxy";
+import { callModel, preWarmModelFactory } from "./fanout/llmProxy";
 import { makeSynthesizeHandler } from "./http/synthesize";
 import type { ManifestSigner } from "./manifest/sign";
 import type { RunSynthesisDeps } from "./pipeline";
@@ -74,4 +74,8 @@ if (process.env.NODE_ENV !== "test" && process.env.VITEST !== "true") {
   buildApp().listen(port, "0.0.0.0", () => {
     log("info", "listening", { port });
   });
+  // Fire-and-forget JWT warm so the first /synthesize doesn't pay the cost.
+  preWarmModelFactory()
+    .then(() => log("info", "jwt_warmed"))
+    .catch((e) => log("warn", "jwt_warm_failed", { error: e instanceof Error ? e.message : String(e) }));
 }
