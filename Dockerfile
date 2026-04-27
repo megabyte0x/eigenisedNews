@@ -10,9 +10,7 @@ RUN npm run build
 
 FROM node:22-alpine
 WORKDIR /app
-RUN addgroup -S app && adduser -S app -G app
 COPY --from=builder /app/dist/bundle.cjs ./bundle.cjs
-USER app
 ENV NODE_ENV=production
 EXPOSE 3000
 CMD ["node", "bundle.cjs"]

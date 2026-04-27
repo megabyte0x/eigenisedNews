@@ -1,35 +1,46 @@
 import express, { type Express } from "express";
+import { hostname } from "node:os";
+import { mnemonicToAccount, privateKeyToAccount } from "viem/accounts";
 import { fetchUrl } from "./fetchers/sourceFetcher";
 import { callModel } from "./fanout/llmProxy";
 import { makeSynthesizeHandler } from "./http/synthesize";
-import { makeManifestSigner } from "./manifest/sign";
+import type { ManifestSigner } from "./manifest/sign";
 import type { RunSynthesisDeps } from "./pipeline";
 import type { Manifest } from "./types";
 import { log } from "./lib/log";
 
-function readDeployment(): Manifest["deployment"] {
-  const env = (process.env.EIGEN_ENVIRONMENT ?? "local") as Manifest["deployment"]["environment"];
+function readDeployment(fallbackAddress: `0x${string}`): Manifest["deployment"] {
+  const env = (process.env.EIGEN_ENVIRONMENT ?? (process.env.MNEMONIC ? "sepolia" : "local")) as Manifest["deployment"]["environment"];
+  const h = hostname();
+  const appIdFromHost = h.startsWith("tee-0x") ? h.slice(4) : null;
   return {
-    appId: process.env.EIGEN_APP_ID ?? "local",
-    agentAddress: process.env.AGENT_ID ?? "local",
-    imageDigest: process.env.EIGEN_IMAGE_DIGEST ?? "local",
-    commitSha: process.env.EIGEN_COMMIT_SHA ?? "local",
+    appId: process.env.EIGEN_APP_ID ?? appIdFromHost ?? "local",
+    agentAddress: (process.env.AGENT_ID ?? fallbackAddress).toLowerCase(),
+    imageDigest: process.env.EIGEN_IMAGE_DIGEST ?? "unknown",
+    commitSha: process.env.EIGEN_COMMIT_SHA ?? "unknown",
     environment: env,
   };
 }
 
-function readPrivateKey(): `0x${string}` {
-  const pk = process.env.AGENT_PRIVATE_KEY;
-  if (!pk || !/^0x[0-9a-fA-F]{64}$/.test(pk)) {
-    throw new Error("AGENT_PRIVATE_KEY not set or invalid");
+function readSigner(): { sign: ManifestSigner; address: `0x${string}` } {
+  const pk = process.env.AGENT_PRIVATE_KEY?.trim();
+  if (pk) {
+    const hex = pk.startsWith("0x") ? pk : `0x${pk}`;
+    if (!/^0x[0-9a-fA-F]{64}$/.test(hex)) throw new Error("AGENT_PRIVATE_KEY format invalid (need 64 hex chars)");
+    const account = privateKeyToAccount(hex as `0x${string}`);
+    return { sign: (h) => account.signMessage({ message: h }), address: account.address };
   }
-  return pk as `0x${string}`;
+  const mnemonic = process.env.MNEMONIC?.trim();
+  if (!mnemonic) throw new Error("Neither AGENT_PRIVATE_KEY nor MNEMONIC is set");
+  // EigenCompute injects MNEMONIC; derive at m/44'/60'/0'/0/0 to match the address shown by `ecloud compute app info`.
+  const account = mnemonicToAccount(mnemonic, { addressIndex: 0 });
+  return { sign: (h) => account.signMessage({ message: h }), address: account.address };
 }
 
 function buildProductionDeps(): RunSynthesisDeps {
-  const { sign, address } = makeManifestSigner(readPrivateKey());
-  const deployment = readDeployment();
-  if (deployment.agentAddress === "local") deployment.agentAddress = address;
+  const { sign, address } = readSigner();
+  const deployment = readDeployment(address);
+  log("info", "boot", { agent: address, appId: deployment.appId, env: deployment.environment });
   return {
     fetchUrl,
     callModel: ({ provider, model, prompt }) => callModel({ provider, model, prompt }),
