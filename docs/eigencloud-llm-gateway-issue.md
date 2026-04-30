@@ -172,8 +172,21 @@ Same body returned from `/v1/chat/completions` against:
   | 1 | Pre-built ghcr | `createEigenGateway({jwt})` pre-warm | 22 | parallel `Promise.all` | `crypto/rsa: verification error` |
   | 2 | Verifiable platform build | `createEigenGateway({jwt})` pre-warm | 22 | parallel `Promise.all` | same |
   | 3 | Verifiable platform build | default `eigen()` (matches example) | 25 | sequential `for...await` | same |
+  | 4 | **Unmodified `Layr-Labs/ecloud-inference-example` HEAD**, deployed as a separate test app on the same account via verifiable build | default `eigen()` (the example's own code) | 25 | one-shot single call | **same** |
 
   No client-side variable we can manipulate changes the gateway response.
+
+- **Canonical example reproduces the failure unchanged.** Deployed `https://github.com/Layr-Labs/ecloud-inference-example` byte-for-byte (no fork, no edits) as a brand-new app on this account:
+  - App ID: `0x47E1ca46C2bd635f14c7EFb9f1d4Cce8f2e34536`
+  - Agent address (derived from injected MNEMONIC, m/44'/60'/0'/0/0): `0xab01468812409E03d470f02c73d71641f08231F2`
+  - Image: platform-built via verifiable build from the example repo's master.
+  - Container booted cleanly, derived its wallet (logged `First wallet address: 0xab01...`), called `generateText({ model: eigen('anthropic/claude-sonnet-4.6'), prompt: 'Hello' })`, and got:
+    ```
+    Error: Eigen Gateway API error (401): invalid token: token signature is invalid: crypto/rsa: verification error
+        at handleApiError (file:///app/node_modules/@layr-labs/ai-gateway-provider/dist/base-provider.js:56:11)
+        at async EigenGatewayLanguageModel.doGenerate (file:///app/node_modules/@layr-labs/ai-gateway-provider/dist/provider.js:31:13)
+    ```
+  Different `app_id`, different agent address, different image_digest, different code path, **same exact rejection**. The issue is independent of which application is calling.
 
 ## Why this looks platform-side
 
