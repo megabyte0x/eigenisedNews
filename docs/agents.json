@@ -1,0 +1,15 @@
+{
+  "$schema": "Per-environment registry of EigenCompute app metadata. Verifiers cross-check manifest.deployment.agentAddress against the entry for manifest.deployment.environment.",
+  "sepolia": {
+    "appId": "0xc35c1d9555E5883Cb0915E02090A097478960734",
+    "agentAddress": "0x329f35dab35220a4316ab94406ac386583eec1c5",
+    "imageDigest": "sha256:4da0373ec058e46159931617863ec4a3bc9a3151e5b9c155bd90c4d0ba65d325",
+    "imageRef": "docker.io/eigenlayer/eigencloud-containers:fd7cdb3868c2855d2940578ee2bee1a10565ef03-1777546875",
+    "commitSha": "fd7cdb3868c2855d2940578ee2bee1a10565ef03",
+    "buildId": "971a920a-7434-49e3-94db-9105cec1d15a",
+    "deployedAt": "2026-04-30",
+    "dashboard": "https://verify-sepolia.eigencloud.xyz/app/0xc35c1d9555E5883Cb0915E02090A097478960734",
+    "status": "stopped — pending platform-side LLM gateway fix (see docs/eigencloud-llm-gateway-issue.md)"
+  },
+  "mainnet-alpha": null
+}
