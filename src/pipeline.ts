@@ -52,17 +52,19 @@ export async function runSynthesis(deps: RunSynthesisDeps, request: SynthesizeRe
   const promptInputs = inputs.map((i) => ({ text: i.error ? `(fetch failed: ${i.error})` : i.text }));
   const { text: promptText, hash: promptHash } = renderPrompt(request.topic, promptInputs);
 
-  const fanoutResults = await Promise.all(
-    POLICY.MODEL_SET.map(async (spec): Promise<FanoutResult> => {
-      try {
-        const { rawOutput } = await deps.callModel({ provider: spec.provider, model: spec.model, prompt: promptText });
-        const parsed = parseStructuredOutput(rawOutput);
-        return { ok: true, spec, rawOutput, rawOutputSha256: sha256Hex(rawOutput), parsedClaims: parsed.claims };
-      } catch (e) {
-        return { ok: false, spec, error: e instanceof Error ? e.message : String(e) };
-      }
-    })
-  );
+  // Sequential fan-out: matches the canonical ecloud-inference-example pattern
+  // (default eigen() factory creates an independent JwtProvider per model, so
+  // parallel calls would race on /dev/tpmrm0 attestation; serializing avoids it).
+  const fanoutResults: FanoutResult[] = [];
+  for (const spec of POLICY.MODEL_SET) {
+    try {
+      const { rawOutput } = await deps.callModel({ provider: spec.provider, model: spec.model, prompt: promptText });
+      const parsed = parseStructuredOutput(rawOutput);
+      fanoutResults.push({ ok: true, spec, rawOutput, rawOutputSha256: sha256Hex(rawOutput), parsedClaims: parsed.claims });
+    } catch (e) {
+      fanoutResults.push({ ok: false, spec, error: e instanceof Error ? e.message : String(e) });
+    }
+  }
 
   const models: ModelRun[] = fanoutResults.map((r) => ({
     provider: r.spec.provider,

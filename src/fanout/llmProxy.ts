@@ -1,57 +1,7 @@
 import { generateText } from "ai";
-import { createEigenGateway, type EigenGatewayLanguageModel } from "@layr-labs/ai-gateway-provider";
-import { AttestClient } from "@layr-labs/ecloud-sdk/attest";
+import { eigen, createEigenGateway, type EigenGatewayLanguageModel } from "@layr-labs/ai-gateway-provider";
 import { POLICY } from "../lib/policy";
 import type { StructuredModelOutput } from "../types";
-
-type ModelFactory = (modelId: string) => EigenGatewayLanguageModel;
-let _sharedFactory: ModelFactory | null = null;
-let _sharedFactoryPending: Promise<ModelFactory> | null = null;
-
-/**
- * The vendor SDK runs TEE attestation per model instance, so 4 parallel
- * generateText calls each kick off their own attestation and race on
- * /dev/tpmrm0. We pre-fetch one JWT and feed it to a single shared factory
- * so all parallel calls reuse the same pre-attested credential.
- */
-async function getSharedFactory(): Promise<ModelFactory> {
-  if (_sharedFactory) return _sharedFactory;
-  if (_sharedFactoryPending) return _sharedFactoryPending;
-  _sharedFactoryPending = (async () => {
-    const baseURL = process.env.EIGEN_GATEWAY_URL || "https://ai-gateway-dev.eigencloud.xyz";
-    const kmsServerURL = process.env.KMS_SERVER_URL;
-    const kmsPublicKey = process.env.KMS_PUBLIC_KEY;
-    let jwt: string | undefined;
-    if (kmsServerURL && kmsPublicKey) {
-      const client = new AttestClient({ kmsServerURL, kmsPublicKey, audience: "llm-proxy" });
-      jwt = await client.attest();
-      if (process.env.DEBUG === "true" && jwt) {
-        try {
-          const [, payload] = jwt.split(".");
-          const decoded = JSON.parse(Buffer.from(payload, "base64url").toString("utf8")) as Record<string, unknown>;
-          console.log(JSON.stringify({ ts: new Date().toISOString(), level: "debug", msg: "jwt_payload", payload: decoded }));
-        } catch { /* ignore */ }
-      }
-    }
-    const wrappedFetch: typeof fetch = async (input, init) => {
-      const res = await fetch(input, init);
-      if (process.env.DEBUG === "true" && !res.ok) {
-        const cloned = res.clone();
-        const body = await cloned.text().catch(() => "<unreadable>");
-        console.log(JSON.stringify({ ts: new Date().toISOString(), level: "debug", msg: "gateway_error", status: res.status, body: body.slice(0, 500), url: typeof input === "string" ? input : input.toString() }));
-      }
-      return res;
-    };
-    const factory = createEigenGateway({ baseURL, jwt, fetch: wrappedFetch });
-    _sharedFactory = factory;
-    return factory;
-  })();
-  return _sharedFactoryPending;
-}
-
-export async function preWarmModelFactory(): Promise<void> {
-  await getSharedFactory();
-}
 
 export type CallModelArgs = {
   provider: string;
@@ -71,7 +21,7 @@ export type CallModelResult = {
 export async function callModel(args: CallModelArgs): Promise<CallModelResult> {
   const retries = args.retries ?? POLICY.LLM_RETRIES;
   const timeoutMs = args.timeoutMs ?? POLICY.LLM_TIMEOUT_MS;
-  const factory = args.modelFactory ?? (await getSharedFactory());
+  const factory = args.modelFactory ?? eigen;
   const modelId = `${args.provider}/${args.model}`;
 
   let lastErr: Error | null = null;
