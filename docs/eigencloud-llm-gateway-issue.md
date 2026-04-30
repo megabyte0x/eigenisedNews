@@ -165,6 +165,15 @@ Same body returned from `/v1/chat/completions` against:
 - **Container env confirmed.** `KMS_SERVER_URL`, `KMS_PUBLIC_KEY`, and `MNEMONIC` are all injected by the platform and visible to the workload (verified by logging `Object.keys(process.env)` at boot).
 - **Verifiable build does not change the result.** Suspecting that a verifiable-build provenance binding might be required for the gateway to accept the JWT, we re-deployed via the platform's verifiable build pipeline with `--verifiable --repo --commit`. The image was rebuilt by `cloudbuild.googleapis.com/GoogleHostedWorker` (per the build's `provenanceJson`) and pushed to `docker.io/eigenlayer/eigencloud-containers@sha256:4da0373ec058e46159931617863ec4a3bc9a3151e5b9c155bd90c4d0ba65d325`. The JWT issued for this verifiable image carries the platform-built `image_digest` and identical `tdx.mrtd` measurements, but the gateway still rejects with the same `crypto/rsa: verification error`. Build ID: `971a920a-7434-49e3-94db-9105cec1d15a` (`status: success`). Same outcome as the Path A pre-built deploy.
 - **Followed the canonical pattern.** Confirmed that the failing client code matches `github.com/Layr-Labs/ecloud-inference-example` (`@layr-labs/ai-gateway-provider@^1.0.1` + `ai@^6.0.168`, `eigen('anthropic/claude-sonnet-4.6')` via `generateText`, MNEMONIC-derived account, no manual JWT injection in the default code path).
+- **Aligned end-to-end with the example.** Final test deploy (commit `b35b377`, build at `docker.io/eigenlayer/eigencloud-containers:b35b377091704f7dc84e6c3e4ea0179c039b872f-1777555665`) bumps the runtime to `node:25-alpine` (matches example), uses the SDK's default `eigen()` factory (no `createEigenGateway` override, no manual `AttestClient` pre-warm, no fetch wrapper), and serializes the model fan-out so each `generateText` call is a single in-flight call (matching the example's one-shot prompt pattern, eliminating any TPM-attestation concurrency). Identical 401 result. Three orthogonal client variants now produce the same `crypto/rsa: verification error`:
+
+  | Variant | Image source | SDK usage | Node | Fan-out | Result |
+  |---|---|---|---|---|---|
+  | 1 | Pre-built ghcr | `createEigenGateway({jwt})` pre-warm | 22 | parallel `Promise.all` | `crypto/rsa: verification error` |
+  | 2 | Verifiable platform build | `createEigenGateway({jwt})` pre-warm | 22 | parallel `Promise.all` | same |
+  | 3 | Verifiable platform build | default `eigen()` (matches example) | 25 | sequential `for...await` | same |
+
+  No client-side variable we can manipulate changes the gateway response.
 
 ## Why this looks platform-side
 
