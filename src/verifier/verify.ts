@@ -7,6 +7,7 @@ import { recoverManifestSigner } from "../manifest/sign";
 import { parseStructuredOutput } from "../fanout/llmProxy";
 import { consensus, type ConsensusInput } from "../merger/consensus";
 import { fetchUrl as defaultFetchUrl, type FetchUrlResult } from "../fetchers/sourceFetcher";
+import { matchProvenance, type ProvenanceChecker } from "./provenance";
 
 export type CheckStatus = "pass" | "fail" | "skip";
 export type CheckResult = { name: string; status: CheckStatus; detail: string };
@@ -15,6 +16,7 @@ export type VerifyOptions = {
   refetchInputs?: boolean;
   fetchUrl?: (url: string) => Promise<FetchUrlResult>;
   dashboardBase?: string;
+  provenance?: ProvenanceChecker;
 };
 
 export async function verifyResponse(response: SynthesizeResponse, opts: VerifyOptions = {}): Promise<CheckResult[]> {
@@ -23,12 +25,6 @@ export async function verifyResponse(response: SynthesizeResponse, opts: VerifyO
   out.push(schema);
   if (schema.status === "fail") return out;
   const m = response.manifest;
-
-  out.push({
-    name: "provenance",
-    status: "skip",
-    detail: opts.dashboardBase ? "online provenance fetch not yet implemented" : "no dashboardBase provided (offline)",
-  });
 
   const recomputed = hashManifestWithPlaceholder(m);
   out.push(
@@ -52,6 +48,7 @@ export async function verifyResponse(response: SynthesizeResponse, opts: VerifyO
   const rawCheck = verifyRawOutputs(m, response.raw);
   out.push(rawCheck);
   out.push(rawCheck.status === "fail" ? { name: "merge", status: "skip", detail: "raw_outputs failed" } : verifyMerge(m, response.raw));
+  out.push(await verifyProvenance(m, opts));
 
   return out;
 }
@@ -105,6 +102,16 @@ function verifyRawOutputs(m: SynthesizeResponse["manifest"], raw: SynthesizeResp
   }
 
   return { name: "raw_outputs", status: "pass", detail: `${okModels.length} successful model raw outputs verified` };
+}
+
+async function verifyProvenance(m: SynthesizeResponse["manifest"], opts: VerifyOptions): Promise<CheckResult> {
+  if (m.deployment.environment === "local") return { name: "provenance", status: "skip", detail: "local deployment" };
+  if (!opts.provenance) return { name: "provenance", status: "skip", detail: "no provenance checker configured" };
+  try {
+    return matchProvenance(m.deployment, await opts.provenance(m.deployment));
+  } catch (e) {
+    return { name: "provenance", status: "fail", detail: e instanceof Error ? e.message : String(e) };
+  }
 }
 
 async function verifyInputs(m: SynthesizeResponse["manifest"], opts: VerifyOptions): Promise<CheckResult> {

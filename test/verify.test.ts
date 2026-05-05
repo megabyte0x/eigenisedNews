@@ -153,4 +153,49 @@ describe("verifyResponse — tampered fixtures", () => {
     });
     expect(results.find((r) => r.name === "inputs")?.status).toBe("fail");
   });
+
+  test("provenance passes when injected evidence matches deployment", async () => {
+    const response = clone(goodResponse);
+    response.manifest.deployment = {
+      ...response.manifest.deployment,
+      environment: "sepolia",
+      appId: "0xabc",
+      imageDigest: "sha256:image",
+      commitSha: "commit123",
+      agentAddress: response.manifest.deployment.agentAddress,
+    };
+
+    const results = await verifyResponse(response, {
+      provenance: async () => ({
+        appId: "0xabc",
+        imageDigests: ["sha256:image"],
+        commitShas: ["commit123"],
+        derivedAddresses: [response.manifest.deployment.agentAddress],
+      }),
+    });
+
+    expect(results.find((r) => r.name === "provenance")?.status).toBe("pass");
+  });
+
+  test("provenance fails when image digest is absent from evidence", async () => {
+    const response = clone(goodResponse);
+    response.manifest.deployment = {
+      ...response.manifest.deployment,
+      environment: "sepolia",
+      appId: "0xabc",
+      imageDigest: "sha256:expected",
+      commitSha: "commit123",
+    };
+
+    const results = await verifyResponse(response, {
+      provenance: async () => ({
+        appId: "0xabc",
+        imageDigests: ["sha256:other"],
+        commitShas: ["commit123"],
+        derivedAddresses: [response.manifest.deployment.agentAddress],
+      }),
+    });
+
+    expect(results.find((r) => r.name === "provenance")?.status).toBe("fail");
+  });
 });
