@@ -23,16 +23,22 @@ For the full design rationale and locked decisions, see `docs/design.md` (which 
 
 ## Manifest verification
 
+Offline integrity/signature/merge check:
+
 ```bash
-tsx scripts/verify-manifest.ts <path-to-saved-response.json>
+npx tsx scripts/verify-manifest.ts response.json
 ```
 
-The verifier runs four independent checks:
+Full strict verification with URL refetch and EigenCompute provenance through the `ecloud` CLI:
 
-1. **Provenance** — `imageDigest` and `commitSha` on the EigenCompute verify dashboard.
-2. **Signature** — recover signer over `manifestSha256` and compare to `agentAddress`.
-3. **Inputs** — refetch URLs and compare `contentSha256`.
-4. **Merge** — re-run the deterministic merger against the per-model claims.
+```bash
+npx tsx scripts/verify-manifest.ts response.json \
+  --refetch \
+  --ecloud \
+  --strict
+```
+
+Use `?include=raw` when saving `/synthesize` responses if you want merge replay to pass in strict mode. Use `--provenance-json evidence.json` for offline review from saved `ecloud`/dashboard evidence. See `docs/verifier.md` for details.
 
 ## Deploy
 
