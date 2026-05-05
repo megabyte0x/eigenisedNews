@@ -2,7 +2,7 @@
  * Standalone manifest verifier.
  *
  * Run:
- *   tsx scripts/verify-manifest.ts <path-to-saved-response.json> [--refetch] [--dashboard <base>]
+ *   tsx scripts/verify-manifest.ts <path-to-saved-response.json> [--refetch] [--ecloud] [--provenance-json <path>] [--strict]
  *
  * Exit codes:
  *   0 = all runnable checks passed
@@ -10,27 +10,36 @@
  */
 
 import { readFileSync } from "node:fs";
-import { verifyResponse, isAllPass } from "../src/verifier/verify";
+import { verifyResponse, isAllPass, isStrictPass } from "../src/verifier/verify";
+import { evidenceFromUnknownJson, makeEcloudProvenanceChecker } from "../src/verifier/provenance";
 import type { SynthesizeResponse } from "../src/types";
 
-function parseArgs(argv: string[]): { path: string; refetch: boolean; dashboardBase?: string } {
+function usage(): string {
+  return "usage: verify-manifest.ts <response.json> [--refetch] [--ecloud] [--provenance-json <path>] [--strict]";
+}
+
+function parseArgs(argv: string[]): { path: string; refetch: boolean; strict: boolean; useEcloud: boolean; provenanceJsonPath?: string } {
   const positional: string[] = [];
   let refetch = false;
-  let dashboardBase: string | undefined;
+  let strict = false;
+  let useEcloud = false;
+  let provenanceJsonPath: string | undefined;
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--refetch") refetch = true;
-    else if (a === "--dashboard") dashboardBase = argv[++i];
+    else if (a === "--strict") strict = true;
+    else if (a === "--ecloud") useEcloud = true;
+    else if (a === "--provenance-json") provenanceJsonPath = argv[++i];
     else positional.push(a);
   }
-  if (positional.length !== 1) {
-    console.error("usage: verify-manifest.ts <response.json> [--refetch] [--dashboard <base>]");
+  if (positional.length !== 1 || provenanceJsonPath === "") {
+    console.error(usage());
     process.exit(1);
   }
-  return { path: positional[0], refetch, dashboardBase };
+  return { path: positional[0], refetch, strict, useEcloud, provenanceJsonPath };
 }
 
-const { path, refetch, dashboardBase } = parseArgs(process.argv.slice(2));
+const { path, refetch, strict, useEcloud, provenanceJsonPath } = parseArgs(process.argv.slice(2));
 let response: SynthesizeResponse;
 try {
   response = JSON.parse(readFileSync(path, "utf8"));
@@ -39,7 +48,13 @@ try {
   process.exit(1);
 }
 
-const results = await verifyResponse(response, { refetchInputs: refetch, dashboardBase });
+const provenance = provenanceJsonPath
+  ? async () => evidenceFromUnknownJson(JSON.parse(readFileSync(provenanceJsonPath, "utf8")))
+  : useEcloud
+    ? makeEcloudProvenanceChecker()
+    : undefined;
+
+const results = await verifyResponse(response, { refetchInputs: refetch, provenance });
 
 const pad = (s: string, n: number) => s + " ".repeat(Math.max(0, n - s.length));
 console.log(`\nVerification report for ${response.manifest.deployment.appId} (${response.manifest.deployment.environment})`);
@@ -50,7 +65,8 @@ for (const r of results) {
   console.log(`${sym} ${pad(r.name, 18)} ${pad(r.status, 6)} ${r.detail}`);
 }
 console.log("");
-if (isAllPass(results)) {
+const ok = strict ? isStrictPass(results) : isAllPass(results);
+if (ok) {
   console.log("ALL RUNNABLE CHECKS PASSED");
   process.exit(0);
 } else {
