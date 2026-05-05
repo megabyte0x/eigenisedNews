@@ -93,3 +93,7 @@ function verifyMerge(m: SynthesizeResponse["manifest"], raw: SynthesizeResponse[
 export function isAllPass(results: CheckResult[]): boolean {
   return results.every((r) => r.status !== "fail");
 }
+
+export function isStrictPass(results: CheckResult[]): boolean {
+  return results.every((r) => r.status === "pass");
+}
