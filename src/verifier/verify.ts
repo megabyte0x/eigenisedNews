@@ -1,6 +1,6 @@
 import type { SynthesizeResponse } from "../types";
 import { canonicalize } from "../lib/canonicalize";
-import { sha256OfBytes } from "../lib/hash";
+import { sha256Hex, sha256OfBytes } from "../lib/hash";
 import { providerModelKey } from "../lib/policy";
 import { hashManifestWithPlaceholder } from "../manifest/build";
 import { recoverManifestSigner } from "../manifest/sign";
@@ -49,6 +49,7 @@ export async function verifyResponse(response: SynthesizeResponse, opts: VerifyO
   }
 
   out.push(await verifyInputs(m, opts));
+  out.push(verifyRawOutputs(m, response.raw));
   out.push(verifyMerge(m, response.raw));
 
   return out;
@@ -68,6 +69,41 @@ function checkSchema(response: unknown): CheckResult {
     return { name: "schema", status: "fail", detail: "raw must be null or an array" };
   }
   return { name: "schema", status: "pass", detail: "response shape is valid" };
+}
+
+function verifyRawOutputs(m: SynthesizeResponse["manifest"], raw: SynthesizeResponse["raw"]): CheckResult {
+  if (!raw) return { name: "raw_outputs", status: "skip", detail: "no raw outputs in response" };
+
+  const okModels = m.models.filter((mm) => mm.status === "ok");
+  const expectedKeys = new Set(okModels.map((mm) => providerModelKey(mm)));
+  const rawByKey = new Map<string, NonNullable<SynthesizeResponse["raw"]>[number]>();
+
+  for (const r of raw) {
+    const key = providerModelKey(r);
+    if (!expectedKeys.has(key)) return { name: "raw_outputs", status: "fail", detail: `unexpected raw output for ${key}` };
+    if (rawByKey.has(key)) return { name: "raw_outputs", status: "fail", detail: `duplicate raw output for ${key}` };
+    rawByKey.set(key, r);
+  }
+
+  for (const model of okModels) {
+    const key = providerModelKey(model);
+    const r = rawByKey.get(key);
+    if (!r) return { name: "raw_outputs", status: "fail", detail: `missing raw output for ${key}` };
+    const actualHash = sha256Hex(r.rawOutput);
+    if (actualHash !== model.rawOutputSha256) {
+      return { name: "raw_outputs", status: "fail", detail: `raw hash mismatch for ${key}` };
+    }
+    try {
+      const parsed = parseStructuredOutput(r.rawOutput);
+      if (parsed.claims.length !== model.parsedClaimCount) {
+        return { name: "raw_outputs", status: "fail", detail: `parsed claim count mismatch for ${key}` };
+      }
+    } catch (e) {
+      return { name: "raw_outputs", status: "fail", detail: `failed to parse raw output for ${key}: ${e instanceof Error ? e.message : e}` };
+    }
+  }
+
+  return { name: "raw_outputs", status: "pass", detail: `${okModels.length} successful model raw outputs verified` };
 }
 
 async function verifyInputs(m: SynthesizeResponse["manifest"], opts: VerifyOptions): Promise<CheckResult> {

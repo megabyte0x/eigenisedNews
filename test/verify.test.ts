@@ -78,6 +78,30 @@ describe("verifyResponse — tampered fixtures", () => {
     expect(results.find((r) => r.name === "signature")?.status).toBe("fail");
   });
 
+  test("raw_outputs fails when a successful model raw output is missing", async () => {
+    const tampered = clone(goodResponse);
+    tampered.raw = tampered.raw!.slice(1);
+    const results = await verifyResponse(tampered);
+    expect(results.find((r) => r.name === "raw_outputs")?.status).toBe("fail");
+  });
+
+  test("raw_outputs fails when raw hash does not match manifest", async () => {
+    const tampered = clone(goodResponse);
+    tampered.raw![0].rawOutput = JSON.stringify({
+      claims: [{ statement: "the sky is green", supportingSourceIndices: [0] }],
+      summary: "changed",
+    });
+    const results = await verifyResponse(tampered);
+    expect(results.find((r) => r.name === "raw_outputs")?.status).toBe("fail");
+  });
+
+  test("raw_outputs fails on extra raw output from non-successful model", async () => {
+    const tampered = clone(goodResponse);
+    tampered.raw!.push({ provider: "extra", model: "bogus", rawOutput: "{}" });
+    const results = await verifyResponse(tampered);
+    expect(results.find((r) => r.name === "raw_outputs")?.status).toBe("fail");
+  });
+
   test("tampered raw model output fails merge check", async () => {
     const tampered = clone(goodResponse);
     if (!tampered.raw || tampered.raw.length === 0) throw new Error("expected raw");
