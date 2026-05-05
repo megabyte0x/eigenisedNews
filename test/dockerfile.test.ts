@@ -6,4 +6,9 @@ describe("Dockerfile", () => {
     const dockerfile = readFileSync("Dockerfile", "utf8");
     expect(dockerfile).toContain("COPY scripts ./scripts");
   });
+
+  test(".dockerignore keeps the frontend build script available to Docker builds", () => {
+    const dockerignore = readFileSync(".dockerignore", "utf8");
+    expect(dockerignore.split(/\r?\n/)).not.toContain("scripts");
+  });
 });

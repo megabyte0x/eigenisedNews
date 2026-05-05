@@ -6,6 +6,5 @@ dist
 test
 coverage
 docs
-scripts
 *.log
 .DS_Store
