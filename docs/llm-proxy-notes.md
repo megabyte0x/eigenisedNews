@@ -52,8 +52,10 @@ The SDK does TEE attestation on EigenCompute. For local dev / tests, use `create
 `scripts/llm-proxy-probe.ts` exercises one model end-to-end against the dev gateway. Run after credentials/env are provisioned:
 
 ```bash
-EIGEN_GATEWAY_BASE_URL=https://ai-gateway-dev.eigencloud.xyz \
+EIGEN_GATEWAY_URL=https://ai-gateway.eigencloud.xyz \
   tsx scripts/llm-proxy-probe.ts
 ```
+
+`EIGEN_GATEWAY_URL` is the canonical override name. Older local tooling may still accept `EIGEN_GATEWAY_BASE_URL` as a fallback alias.
 
 If any model in `POLICY.MODEL_SET` returns an error, update the slug here and in `policy.ts`, then bump `RULESET_VERSION`.

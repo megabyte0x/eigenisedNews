@@ -2,7 +2,7 @@
  * One-shot probe of the EigenCloud LLM Proxy for each model in POLICY.MODEL_SET.
  *
  * Run:
- *   EIGEN_GATEWAY_BASE_URL=https://ai-gateway-dev.eigencloud.xyz tsx scripts/llm-proxy-probe.ts
+ *   EIGEN_GATEWAY_URL=https://ai-gateway.eigencloud.xyz tsx scripts/llm-proxy-probe.ts
  *
  * Prints per-model status and latency. If a model errors, update its slug in
  * src/lib/policy.ts and bump RULESET_VERSION.
@@ -10,9 +10,10 @@
 
 import { generateText } from "ai";
 import { eigen, createEigenGateway } from "@layr-labs/ai-gateway-provider";
+import { resolveEigenGatewayUrl } from "../src/lib/eigenGateway";
 import { POLICY, providerModelKey } from "../src/lib/policy";
 
-const baseURL = process.env.EIGEN_GATEWAY_BASE_URL;
+const baseURL = process.env.EIGEN_GATEWAY_URL || process.env.EIGEN_GATEWAY_BASE_URL ? resolveEigenGatewayUrl() : null;
 const factory = baseURL ? createEigenGateway({ baseURL }) : eigen;
 
 const PROMPT = "Reply with the literal word PONG and nothing else.";

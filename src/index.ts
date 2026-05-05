@@ -1,14 +1,20 @@
 import express, { type Express } from "express";
+import { existsSync } from "node:fs";
 import { hostname } from "node:os";
+import { join } from "node:path";
 import { mnemonicToAccount, privateKeyToAccount } from "viem/accounts";
 import { fetchUrl } from "./fetchers/sourceFetcher";
 import { callModel } from "./fanout/llmProxy";
+import { renderFrontendShell } from "./frontend/shell";
 import { makeSynthesizeHandler } from "./http/synthesize";
 import type { ManifestSigner } from "./manifest/sign";
 import type { RunSynthesisDeps } from "./pipeline";
 import type { Manifest } from "./types";
+import { loadDotEnvFile } from "./lib/env";
 import { isUnknownRecord } from "./lib/guards";
 import { log } from "./lib/log";
+
+loadDotEnvFile();
 
 function readDeployment(fallbackAddress: `0x${string}`): Manifest["deployment"] {
   const env = readDeploymentEnvironment(process.env.EIGEN_ENVIRONMENT ?? (process.env.MNEMONIC ? "sepolia" : "local"));
@@ -73,8 +79,15 @@ function assertRunSynthesisDeps(d: unknown): asserts d is RunSynthesisDeps {
 export function buildApp(depsOverride?: RunSynthesisDeps): Express {
   const app = express();
   app.use(express.json({ limit: "4mb" }));
+  const staticDir = resolveStaticDir();
+  if (staticDir) {
+    app.use(express.static(staticDir, { extensions: ["js", "css"], index: false }));
+  }
   app.get("/healthz", (_req, res) => {
     res.json({ ok: true });
+  });
+  app.get("/", (_req, res) => {
+    res.type("html").send(renderFrontendShell());
   });
 
   if (depsOverride !== undefined) {
@@ -91,4 +104,11 @@ if (process.env.NODE_ENV !== "test" && process.env.VITEST !== "true") {
   buildApp().listen(port, "0.0.0.0", () => {
     log("info", "listening", { port });
   });
+}
+
+function resolveStaticDir(): string | null {
+  const distPath = join(process.cwd(), "dist/public");
+  if (existsSync(distPath)) return distPath;
+  const publicPath = join(process.cwd(), "public");
+  return existsSync(publicPath) ? publicPath : null;
 }

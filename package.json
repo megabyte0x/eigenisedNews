@@ -8,9 +8,12 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "build": "esbuild src/index.ts --bundle --platform=node --target=node22 --format=cjs --outfile=dist/bundle.cjs",
+    "build:frontend": "node scripts/build-frontend.mjs dist/public",
+    "dev:frontend": "node scripts/build-frontend.mjs public --watch",
+    "build": "npm run build:frontend && esbuild src/index.ts --bundle --platform=node --target=node22 --format=cjs --outfile=dist/bundle.cjs",
     "start": "node dist/bundle.cjs",
-    "dev": "tsx watch src/index.ts",
+    "dev": "sh -c 'npm run dev:frontend & tsx watch src/index.ts'",
+    "e2e:live": "node scripts/live-e2e.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
     "lint": "tsc --noEmit"
@@ -22,10 +25,15 @@
     "viem": "^2.48.4"
   },
   "devDependencies": {
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/react": "^16.3.2",
     "@types/express": "^5.0.6",
     "@types/node": "^25.6.0",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
     "@types/supertest": "^6.0.2",
     "esbuild": "^0.28.0",
+    "jsdom": "^29.1.1",
     "supertest": "^7.0.0",
     "tsx": "^4.21.0",
     "typescript": "^6.0.3",

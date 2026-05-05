@@ -1,0 +1,176 @@
+@import url("https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap");
+
+:root {
+  color-scheme: dark;
+  font-family: "IBM Plex Sans", sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  min-height: 100%;
+}
+
+body {
+  margin: 0;
+  background:
+    radial-gradient(circle at top left, rgba(247, 178, 103, 0.18), transparent 24rem),
+    radial-gradient(circle at top right, rgba(64, 114, 255, 0.14), transparent 24rem),
+    linear-gradient(180deg, #0b1020 0%, #0d1327 48%, #0a0f1c 100%);
+  font-family: "IBM Plex Sans", sans-serif;
+}
+
+.font-serif {
+  font-family: "Cormorant Garamond", serif;
+}
+
+.min-h-screen { min-height: 100vh; }
+.bg-\[\#0b1020\] { background-color: #0b1020; }
+.text-\[\#f3efe3\] { color: #f3efe3; }
+.mx-auto { margin-left: auto; margin-right: auto; }
+.flex { display: flex; }
+.grid { display: grid; }
+.block { display: block; }
+.inline-flex { display: inline-flex; }
+.max-w-7xl { max-width: 80rem; }
+.max-w-3xl { max-width: 48rem; }
+.max-w-2xl { max-width: 42rem; }
+.flex-col { flex-direction: column; }
+.flex-wrap { flex-wrap: wrap; }
+.items-center { align-items: center; }
+.justify-between { justify-content: space-between; }
+.justify-center { justify-content: center; }
+.gap-3 { gap: 0.75rem; }
+.gap-4 { gap: 1rem; }
+.gap-5 { gap: 1.25rem; }
+.gap-6 { gap: 1.5rem; }
+.gap-8 { gap: 2rem; }
+.space-y-3 > :not([hidden]) ~ :not([hidden]) { margin-top: 0.75rem; }
+.space-y-5 > :not([hidden]) ~ :not([hidden]) { margin-top: 1.25rem; }
+.space-y-6 > :not([hidden]) ~ :not([hidden]) { margin-top: 1.5rem; }
+.overflow-hidden { overflow: hidden; }
+.overflow-x-auto { overflow-x: auto; }
+.whitespace-pre-wrap { white-space: pre-wrap; }
+.rounded-\[28px\] { border-radius: 28px; }
+.rounded-\[24px\] { border-radius: 24px; }
+.rounded-2xl { border-radius: 1rem; }
+.rounded-3xl { border-radius: 1.5rem; }
+.rounded-full { border-radius: 9999px; }
+.border { border-width: 1px; border-style: solid; }
+.border-dashed { border-style: dashed; }
+.border-white\/10 { border-color: rgba(255, 255, 255, 0.1); }
+.border-white\/15 { border-color: rgba(255, 255, 255, 0.15); }
+.border-\[\#f7b267\]\/35 { border-color: rgba(247, 178, 103, 0.35); }
+.border-\[\#ff7d73\]\/35 { border-color: rgba(255, 125, 115, 0.35); }
+.bg-black\/35 { background-color: rgba(0, 0, 0, 0.35); }
+.bg-white\/5 { background-color: rgba(255, 255, 255, 0.05); }
+.bg-white\/\[0\.03\] { background-color: rgba(255, 255, 255, 0.03); }
+.bg-white\/\[0\.07\] { background-color: rgba(255, 255, 255, 0.07); }
+.bg-\[\#f7b267\] { background-color: #f7b267; }
+.bg-\[\#0d1426\] { background-color: #0d1426; }
+.bg-\[\#f7b267\]\/10 { background-color: rgba(247, 178, 103, 0.1); }
+.bg-\[\#90f0b5\]\/10 { background-color: rgba(144, 240, 181, 0.1); }
+.bg-\[\#ff7d73\]\/10 { background-color: rgba(255, 125, 115, 0.1); }
+.p-4 { padding: 1rem; }
+.p-6 { padding: 1.5rem; }
+.p-8 { padding: 2rem; }
+.px-3 { padding-left: 0.75rem; padding-right: 0.75rem; }
+.px-4 { padding-left: 1rem; padding-right: 1rem; }
+.px-5 { padding-left: 1.25rem; padding-right: 1.25rem; }
+.px-6 { padding-left: 1.5rem; padding-right: 1.5rem; }
+.px-8 { padding-left: 2rem; padding-right: 2rem; }
+.px-10 { padding-left: 2.5rem; padding-right: 2.5rem; }
+.py-1 { padding-top: 0.25rem; padding-bottom: 0.25rem; }
+.py-3 { padding-top: 0.75rem; padding-bottom: 0.75rem; }
+.py-4 { padding-top: 1rem; padding-bottom: 1rem; }
+.py-6 { padding-top: 1.5rem; padding-bottom: 1.5rem; }
+.py-8 { padding-top: 2rem; padding-bottom: 2rem; }
+.pt-4 { padding-top: 1rem; }
+.pb-4 { padding-bottom: 1rem; }
+.min-h-28 { min-height: 7rem; }
+.w-full { width: 100%; }
+.cursor-pointer { cursor: pointer; }
+.cursor-wait { cursor: wait; }
+.text-xs { font-size: 0.75rem; }
+.text-sm { font-size: 0.9375rem; }
+.text-lg { font-size: 1.125rem; }
+.text-2xl { font-size: 1.75rem; }
+.text-4xl { font-size: 2.5rem; }
+.font-medium { font-weight: 500; }
+.tracking-tight { letter-spacing: -0.02em; }
+.tracking-\[0\.24em\] { letter-spacing: 0.24em; }
+.tracking-\[0\.25em\] { letter-spacing: 0.25em; }
+.tracking-\[0\.38em\] { letter-spacing: 0.38em; }
+.uppercase { text-transform: uppercase; }
+.leading-6 { line-height: 1.5rem; }
+.leading-7 { line-height: 1.75rem; }
+.text-\[\#f7b267\] { color: #f7b267; }
+.text-\[\#fff9ec\] { color: #fff9ec; }
+.text-\[\#d8d2c2\] { color: #d8d2c2; }
+.text-\[\#c8c1af\] { color: #c8c1af; }
+.text-\[\#efe7d1\] { color: #efe7d1; }
+.text-\[\#23160a\] { color: #23160a; }
+.text-\[\#d9f7e2\] { color: #d9f7e2; }
+.text-\[\#dce8ff\] { color: #dce8ff; }
+.text-\[\#bdb5a3\] { color: #bdb5a3; }
+.text-\[\#a39a83\] { color: #a39a83; }
+.text-\[\#ffd8a1\] { color: #ffd8a1; }
+.text-\[\#baf4ca\] { color: #baf4ca; }
+.text-\[\#ffd2cd\] { color: #ffd2cd; }
+.text-\[\#9af0b2\] { color: #9af0b2; }
+.text-\[\#ff9f92\] { color: #ff9f92; }
+.text-\[\#ffe1b7\] { color: #ffe1b7; }
+.text-\[\#ffd1cb\] { color: #ffd1cb; }
+.shadow-\[0_20px_80px_rgba\(0\,0\,0\,0\.45\)\] { box-shadow: 0 20px 80px rgba(0, 0, 0, 0.45); }
+.backdrop-blur-xl { backdrop-filter: blur(24px); }
+.outline-none { outline: none; }
+.transition { transition: all 160ms ease; }
+.hover\:bg-\[\#ffd199\]:hover { background-color: #ffd199; }
+.placeholder\:text-\[\#827866\]::placeholder { color: #827866; }
+.focus\:border-\[\#f7b267\]\/60:focus { border-color: rgba(247, 178, 103, 0.6); }
+.disabled\:cursor-wait:disabled { cursor: wait; }
+.disabled\:opacity-70:disabled { opacity: 0.7; }
+
+input,
+textarea,
+button {
+  font: inherit;
+}
+
+textarea {
+  resize: vertical;
+}
+
+summary {
+  list-style: none;
+}
+
+summary::-webkit-details-marker {
+  display: none;
+}
+
+@media (min-width: 640px) {
+  .sm\:px-8 { padding-left: 2rem; padding-right: 2rem; }
+  .sm\:text-base { font-size: 1rem; }
+  .sm\:text-5xl { font-size: 3.5rem; }
+  .sm\:p-8 { padding: 2rem; }
+}
+
+@media (min-width: 768px) {
+  .md\:grid-cols-\[0\.7fr_1\.3fr\] { grid-template-columns: 0.7fr 1.3fr; }
+}
+
+@media (min-width: 1024px) {
+  .lg\:grid-cols-\[1\.4fr_0\.8fr\] { grid-template-columns: 1.4fr 0.8fr; }
+  .lg\:grid-cols-\[0\.95fr_1\.05fr\] { grid-template-columns: 0.95fr 1.05fr; }
+  .lg\:px-10 { padding-left: 2.5rem; padding-right: 2.5rem; }
+  .lg\:px-12 { padding-left: 3rem; padding-right: 3rem; }
+}
+
+@media (min-width: 1280px) {
+  .xl\:grid-cols-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}

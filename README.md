@@ -44,6 +44,45 @@ Use `?include=raw` when saving `/synthesize` responses if you want merge replay 
 
 Use `eigencompute.yaml` with the `ecloud` CLI; deployment metadata is recorded in each signed manifest.
 
+## Live E2E with real LLMs
+
+Eigen's guidance for working inference is to deploy on **mainnet-alpha** with the stable CLI and the production gateway override:
+
+```bash
+npm i -g @layr-labs/ecloud-cli@0.5.0
+ecloud compute env set mainnet-alpha
+```
+
+In your deployment `.env`, set:
+
+```bash
+EIGEN_GATEWAY_URL=https://ai-gateway.eigencloud.xyz
+```
+
+Then deploy normally on `mainnet-alpha`. After the app is reachable, run a live smoke from your machine:
+
+```bash
+APP_URL=http://<public-ip>:3000 npm run e2e:live
+```
+
+The smoke test checks:
+- `GET /healthz`
+- `GET /` frontend shell
+- `POST /synthesize?include=raw` with a deterministic text source
+- signed manifest + `thresholdMet=true` + raw model outputs present
+
+Optional overrides:
+
+```bash
+APP_URL=http://<public-ip>:3000 \
+TOPIC="My real topic" \
+SOURCE_TEXT="Paste real source text here" \
+SOURCE_URL="https://example.com/source" \
+SOURCE_URLS=$'https://example.com/a\nhttps://example.com/b' \
+OUTPUT_PATH=/tmp/eigenised-news-response.json \
+npm run e2e:live
+```
+
 ## Out of scope (deferred)
 
 - On-chain commit of `manifestSha256`
