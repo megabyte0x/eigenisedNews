@@ -23,6 +23,11 @@ describe("verifier result helpers", () => {
 });
 
 describe("verifyResponse — good fixture", () => {
+  test("schema check passes for good response", async () => {
+    const results = await verifyResponse(goodResponse);
+    expect(results[0]).toMatchObject({ name: "schema", status: "pass" });
+  });
+
   test("all runnable checks pass", async () => {
     const results = await verifyResponse(goodResponse);
     expect(isAllPass(results)).toBe(true);
@@ -33,6 +38,12 @@ describe("verifyResponse — good fixture", () => {
 });
 
 describe("verifyResponse — tampered fixtures", () => {
+  test("schema check fails instead of throwing on malformed response", async () => {
+    const results = await verifyResponse({} as any);
+    expect(results.find((r) => r.name === "schema")?.status).toBe("fail");
+    expect(isAllPass(results)).toBe(false);
+  });
+
   test("tampered claim fails manifest_hash check", async () => {
     const tampered = clone(goodResponse);
     tampered.manifest.merge.claims[0].statement = "the sky is green";

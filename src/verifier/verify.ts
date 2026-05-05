@@ -19,6 +19,9 @@ export type VerifyOptions = {
 
 export async function verifyResponse(response: SynthesizeResponse, opts: VerifyOptions = {}): Promise<CheckResult[]> {
   const out: CheckResult[] = [];
+  const schema = checkSchema(response);
+  out.push(schema);
+  if (schema.status === "fail") return out;
   const m = response.manifest;
 
   out.push({
@@ -49,6 +52,22 @@ export async function verifyResponse(response: SynthesizeResponse, opts: VerifyO
   out.push(verifyMerge(m, response.raw));
 
   return out;
+}
+
+function isRecord(x: unknown): x is Record<string, unknown> {
+  return !!x && typeof x === "object";
+}
+
+function checkSchema(response: unknown): CheckResult {
+  if (!isRecord(response)) return { name: "schema", status: "fail", detail: "response is not an object" };
+  if (!isRecord(response.manifest)) return { name: "schema", status: "fail", detail: "manifest missing or not an object" };
+  if (typeof response.signature !== "string" || !response.signature.startsWith("0x")) {
+    return { name: "schema", status: "fail", detail: "signature missing or invalid" };
+  }
+  if (response.raw !== null && !Array.isArray(response.raw)) {
+    return { name: "schema", status: "fail", detail: "raw must be null or an array" };
+  }
+  return { name: "schema", status: "pass", detail: "response shape is valid" };
 }
 
 async function verifyInputs(m: SynthesizeResponse["manifest"], opts: VerifyOptions): Promise<CheckResult> {
