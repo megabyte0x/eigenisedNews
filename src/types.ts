@@ -3,8 +3,10 @@ import type { Sha256 } from "./lib/hash";
 export type SynthesizeRequest = {
   topic: string;
   urls?: string[];
-  sources?: { title?: string; url?: string; text: string }[];
+  sources?: SynthesizeSource[];
 };
+
+export type SynthesizeSource = { title?: string; url?: string; text: string };
 
 export type InputRecord = {
   index: number;
@@ -29,11 +31,14 @@ export type ModelRun = {
   error: string | null;
 };
 
-export type Claim = {
-  id: string;
+export type StructuredClaim = {
   statement: string;
-  supportingModels: string[];
   supportingSourceIndices: number[];
+};
+
+export type Claim = StructuredClaim & {
+  id: string;
+  supportingModels: string[];
 };
 
 export type Manifest = {
@@ -63,13 +68,15 @@ export type Manifest = {
   manifestSha256: Sha256;
 };
 
+export type RawModelOutput = { provider: string; model: string; rawOutput: string };
+
 export type SynthesizeResponse = {
   manifest: Manifest;
   signature: `0x${string}`;
-  raw: { provider: string; model: string; rawOutput: string }[] | null;
+  raw: RawModelOutput[] | null;
 };
 
 export type StructuredModelOutput = {
-  claims: { statement: string; supportingSourceIndices: number[] }[];
+  claims: StructuredClaim[];
   summary: string;
 };

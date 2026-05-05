@@ -10,9 +10,9 @@
  */
 
 import { readFileSync } from "node:fs";
+import { isUnknownRecord, type UnknownRecord } from "../src/lib/guards";
 import { verifyResponse, isAllPass, isStrictPass } from "../src/verifier/verify";
 import { evidenceFromUnknownJson, makeEcloudProvenanceChecker } from "../src/verifier/provenance";
-import type { SynthesizeResponse } from "../src/types";
 
 function usage(): string {
   return "usage: verify-manifest.ts <response.json> [--refetch] [--ecloud] [--provenance-json <path>] [--strict]";
@@ -29,7 +29,14 @@ function parseArgs(argv: string[]): { path: string; refetch: boolean; strict: bo
     if (a === "--refetch") refetch = true;
     else if (a === "--strict") strict = true;
     else if (a === "--ecloud") useEcloud = true;
-    else if (a === "--provenance-json") provenanceJsonPath = argv[++i];
+    else if (a === "--provenance-json") {
+      const value = argv[++i];
+      if (!value || value.startsWith("--")) {
+        console.error(usage());
+        process.exit(1);
+      }
+      provenanceJsonPath = value;
+    }
     else positional.push(a);
   }
   if (positional.length !== 1 || provenanceJsonPath === "") {
@@ -40,7 +47,7 @@ function parseArgs(argv: string[]): { path: string; refetch: boolean; strict: bo
 }
 
 const { path, refetch, strict, useEcloud, provenanceJsonPath } = parseArgs(process.argv.slice(2));
-let response: SynthesizeResponse;
+let response: unknown;
 try {
   response = JSON.parse(readFileSync(path, "utf8"));
 } catch (e) {
@@ -55,10 +62,11 @@ const provenance = provenanceJsonPath
     : undefined;
 
 const results = await verifyResponse(response, { refetchInputs: refetch, provenance });
+const summary = manifestSummary(response);
 
 const pad = (s: string, n: number) => s + " ".repeat(Math.max(0, n - s.length));
-console.log(`\nVerification report for ${response.manifest.deployment.appId} (${response.manifest.deployment.environment})`);
-console.log(`commit: ${response.manifest.deployment.commitSha}  image: ${response.manifest.deployment.imageDigest}`);
+console.log(`\nVerification report for ${summary.appId} (${summary.environment})`);
+console.log(`commit: ${summary.commitSha}  image: ${summary.imageDigest}`);
 console.log("");
 for (const r of results) {
   const sym = r.status === "pass" ? "✓" : r.status === "fail" ? "✗" : "·";
@@ -72,4 +80,21 @@ if (ok) {
 } else {
   console.log("VERIFICATION FAILED");
   process.exit(1);
+}
+
+function manifestSummary(value: unknown): { appId: string; environment: string; commitSha: string; imageDigest: string } {
+  const manifest = isUnknownRecord(value) && isUnknownRecord(value.manifest) ? value.manifest : null;
+  const deployment = manifest && isUnknownRecord(manifest.deployment) ? manifest.deployment : null;
+  return {
+    appId: stringField(deployment, "appId", "<invalid manifest>"),
+    environment: stringField(deployment, "environment", "unknown"),
+    commitSha: stringField(deployment, "commitSha", "unknown"),
+    imageDigest: stringField(deployment, "imageDigest", "unknown"),
+  };
+}
+
+function stringField(value: UnknownRecord | null, key: string, fallback: string): string {
+  if (!value) return fallback;
+  const field = value[key];
+  return typeof field === "string" ? field : fallback;
 }

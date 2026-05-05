@@ -1,23 +1,22 @@
 import type { Request, Response } from "express";
+import { isUnknownRecord } from "../lib/guards";
 import { runSynthesis, type RunSynthesisDeps } from "../pipeline";
 import type { SynthesizeRequest, SynthesizeResponse } from "../types";
 
+type SourceInput = NonNullable<SynthesizeRequest["sources"]>[number];
+
 export function makeSynthesizeHandler(deps: RunSynthesisDeps) {
-  return async (req: Request, res: Response): Promise<void> => {
-    const body = req.body as unknown;
-    if (!body || typeof body !== "object") {
+  return async (req: Request<Record<string, never>, unknown, unknown>, res: Response): Promise<void> => {
+    const body = req.body;
+    if (!isUnknownRecord(body)) {
       res.status(400).json({ error: "body_required" });
       return;
     }
-    const b = body as Record<string, unknown>;
     const request: SynthesizeRequest = {
-      topic: typeof b.topic === "string" ? b.topic : "",
-      ...(Array.isArray(b.urls) && { urls: b.urls.filter((u): u is string => typeof u === "string") }),
-      ...(Array.isArray(b.sources) && {
-        sources: (b.sources as unknown[]).filter(
-          (s): s is { title?: string; url?: string; text: string } =>
-            !!s && typeof s === "object" && typeof (s as Record<string, unknown>).text === "string"
-        ),
+      topic: typeof body.topic === "string" ? body.topic : "",
+      ...(Array.isArray(body.urls) && { urls: body.urls.filter((u): u is string => typeof u === "string") }),
+      ...(Array.isArray(body.sources) && {
+        sources: body.sources.filter(isSourceInput),
       }),
     };
 
@@ -41,4 +40,11 @@ export function makeSynthesizeHandler(deps: RunSynthesisDeps) {
     }
     res.status(200).json(response);
   };
+}
+
+function isSourceInput(value: unknown): value is SourceInput {
+  if (!isUnknownRecord(value) || typeof value.text !== "string") return false;
+  if ("title" in value && value.title !== undefined && typeof value.title !== "string") return false;
+  if ("url" in value && value.url !== undefined && typeof value.url !== "string") return false;
+  return true;
 }

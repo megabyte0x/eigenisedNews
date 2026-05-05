@@ -1,7 +1,7 @@
-import type { SynthesizeRequest, Manifest, ModelRun, Claim, InputRecord } from "./types";
+import type { SynthesizeRequest, Manifest, ModelRun, Claim, InputRecord, RawModelOutput, StructuredClaim } from "./types";
 import { POLICY, providerModelKey, type ModelSpec } from "./lib/policy";
-import { canonicalize } from "./lib/canonicalize";
-import { sha256OfBytes, sha256Hex } from "./lib/hash";
+import { sha256OfCanonical } from "./lib/canonicalHash";
+import { sha256Hex } from "./lib/hash";
 import type { FetchUrlResult } from "./fetchers/sourceFetcher";
 import { hashText } from "./fetchers/sourceFetcher";
 import { renderPrompt } from "./fanout/structuredPrompt";
@@ -18,7 +18,7 @@ export type RunSynthesisDeps = {
   sign: ManifestSigner;
 };
 
-export type RawModelOutput = { provider: string; model: string; rawOutput: string };
+export type { RawModelOutput } from "./types";
 
 export type RunSynthesisResult =
   | { status: "validation_error"; error: string; manifest: null; signature: null; raw: [] }
@@ -36,7 +36,7 @@ function validate(req: SynthesizeRequest): ValidationError | null {
   return null;
 }
 
-type FanoutOk = { ok: true; spec: ModelSpec; rawOutput: string; rawOutputSha256: ReturnType<typeof sha256Hex>; parsedClaims: { statement: string; supportingSourceIndices: number[] }[] };
+type FanoutOk = { ok: true; spec: ModelSpec; rawOutput: string; rawOutputSha256: ReturnType<typeof sha256Hex>; parsedClaims: StructuredClaim[] };
 type FanoutErr = { ok: false; spec: ModelSpec; error: string };
 type FanoutResult = FanoutOk | FanoutErr;
 
@@ -46,7 +46,7 @@ export async function runSynthesis(deps: RunSynthesisDeps, request: SynthesizeRe
     return { status: "validation_error", error: validationError, manifest: null, signature: null, raw: [] };
   }
 
-  const requestHash = sha256OfBytes(canonicalize(request));
+  const requestHash = sha256OfCanonical(request);
   const inputs = await ingestInputs(deps, request);
 
   const promptInputs = inputs.map((i) => ({ text: i.error ? `(fetch failed: ${i.error})` : i.text }));

@@ -1,3 +1,5 @@
+import { isUnknownRecord } from "./guards";
+
 const TEXT_ENCODER = new TextEncoder();
 
 export function canonicalize(value: unknown): Uint8Array {
@@ -14,12 +16,11 @@ function canonicalString(value: unknown): string {
   }
   if (typeof value === "string") return encodeString(value);
   if (Array.isArray(value)) return "[" + value.map(canonicalString).join(",") + "]";
-  if (typeof value === "object") {
-    const obj = value as Record<string, unknown>;
-    const keys = Object.keys(obj).sort();
+  if (isUnknownRecord(value)) {
+    const keys = Object.keys(value).sort();
     const parts: string[] = [];
     for (const k of keys) {
-      const v = obj[k];
+      const v = value[k];
       if (v === undefined) continue;
       parts.push(encodeString(k) + ":" + canonicalString(v));
     }

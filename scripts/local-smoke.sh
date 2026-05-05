@@ -23,8 +23,6 @@ echo "==> running container"
 docker rm -f "$NAME" >/dev/null 2>&1 || true
 docker run --rm -d --platform linux/amd64 -p "$HOST_PORT:3000" \
   -e PORT=3000 \
-  -e LLM_PROXY_URL=http://stub \
-  -e LLM_PROXY_API_KEY=stub \
   -e AGENT_PRIVATE_KEY=0x0000000000000000000000000000000000000000000000000000000000000001 \
   -e AGENT_ID=0x7e5f4552091a69125d5dfcb7b8c2659029395bdf \
   --name "$NAME" "$IMAGE" >/dev/null

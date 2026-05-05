@@ -10,7 +10,7 @@ A single-endpoint HTTP service that accepts a topic plus a set of sources (URLs 
 
 ```bash
 npm install
-cp .env.example .env   # fill in LLM_PROXY_URL and LLM_PROXY_API_KEY
+cp .env.example .env   # set AGENT_PRIVATE_KEY for local signing; gateway auth is automatic in EigenCompute
 npm run dev
 curl http://localhost:3000/healthz
 ```
@@ -19,7 +19,7 @@ curl http://localhost:3000/healthz
 
 The trust pivot is the deterministic merger: claims supported by `⌈N/2⌉` or more successful models become consensus claims, the rest become minority claims, and the algorithm itself is code in a verifiable image. Combined with the LLM Proxy (model versions are recorded), the source fetcher (raw bytes are hashed), and a TEE-derived signing key (deterministic per `appId`, persists across upgrades), every byte that influenced the synthesis is mechanically verifiable by an auditor running `scripts/verify-manifest.ts` against a saved response.
 
-For the full design rationale and locked decisions, see `docs/design.md` (which points to the canonical doc at `../docs/plans/2026-04-27-eigenised-news-design.md`).
+For the full design rationale and locked decisions, see `docs/design.md`.
 
 ## Manifest verification
 
@@ -42,7 +42,7 @@ Use `?include=raw` when saving `/synthesize` responses if you want merge replay 
 
 ## Deploy
 
-See `docs/deploy.md`.
+Use `eigencompute.yaml` with the `ecloud` CLI; deployment metadata is recorded in each signed manifest.
 
 ## Out of scope (deferred)
 

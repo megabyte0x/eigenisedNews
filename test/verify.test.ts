@@ -49,7 +49,13 @@ describe("verifyResponse — good fixture", () => {
 
 describe("verifyResponse — tampered fixtures", () => {
   test("schema check fails instead of throwing on malformed response", async () => {
-    const results = await verifyResponse({} as any);
+    const results = await verifyResponse({});
+    expect(results.find((r) => r.name === "schema")?.status).toBe("fail");
+    expect(isAllPass(results)).toBe(false);
+  });
+
+  test("schema check fails instead of throwing on malformed nested manifest", async () => {
+    const results = await verifyResponse({ manifest: { deployment: null }, signature: "0x1234", raw: null });
     expect(results.find((r) => r.name === "schema")?.status).toBe("fail");
     expect(isAllPass(results)).toBe(false);
   });

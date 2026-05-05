@@ -4,7 +4,7 @@ import type { Sha256 } from "../lib/hash";
 
 export type ManifestSigner = (manifestSha256: Sha256) => Promise<`0x${string}`>;
 
-export function makeManifestSigner(privateKey: `0x${string}`): { sign: ManifestSigner; address: `0x${string}` } {
+function makeManifestSigner(privateKey: `0x${string}`): { sign: ManifestSigner; address: `0x${string}` } {
   const account: PrivateKeyAccount = privateKeyToAccount(privateKey);
   return {
     sign: (manifestSha256) => account.signMessage({ message: manifestSha256 }),

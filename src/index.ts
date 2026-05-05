@@ -7,10 +7,11 @@ import { makeSynthesizeHandler } from "./http/synthesize";
 import type { ManifestSigner } from "./manifest/sign";
 import type { RunSynthesisDeps } from "./pipeline";
 import type { Manifest } from "./types";
+import { isUnknownRecord } from "./lib/guards";
 import { log } from "./lib/log";
 
 function readDeployment(fallbackAddress: `0x${string}`): Manifest["deployment"] {
-  const env = (process.env.EIGEN_ENVIRONMENT ?? (process.env.MNEMONIC ? "sepolia" : "local")) as Manifest["deployment"]["environment"];
+  const env = readDeploymentEnvironment(process.env.EIGEN_ENVIRONMENT ?? (process.env.MNEMONIC ? "sepolia" : "local"));
   const h = hostname();
   const appIdFromHost = h.startsWith("tee-0x") ? h.slice(4) : null;
   return {
@@ -20,6 +21,11 @@ function readDeployment(fallbackAddress: `0x${string}`): Manifest["deployment"] 
     commitSha: process.env.EIGEN_COMMIT_SHA ?? "unknown",
     environment: env,
   };
+}
+
+function readDeploymentEnvironment(value: string): Manifest["deployment"]["environment"] {
+  if (value === "sepolia" || value === "mainnet-alpha" || value === "local") return value;
+  throw new Error(`EIGEN_ENVIRONMENT invalid: ${value}`);
 }
 
 function readSigner(): { sign: ManifestSigner; address: `0x${string}` } {
@@ -50,18 +56,29 @@ function buildProductionDeps(): RunSynthesisDeps {
   };
 }
 
-function isCompleteDeps(d?: Partial<RunSynthesisDeps>): d is RunSynthesisDeps {
-  return !!(d && d.fetchUrl && d.callModel && d.now && d.deployment && d.sign);
+function assertRunSynthesisDeps(d: unknown): asserts d is RunSynthesisDeps {
+  const deps = isUnknownRecord(d) ? d : {};
+  const missing = [
+    ["fetchUrl", typeof deps.fetchUrl === "function"],
+    ["callModel", typeof deps.callModel === "function"],
+    ["now", typeof deps.now === "function"],
+    ["deployment", !!deps.deployment],
+    ["sign", typeof deps.sign === "function"],
+  ]
+    .filter(([, ok]) => !ok)
+    .map(([name]) => name);
+  if (missing.length > 0) throw new Error(`buildApp deps missing: ${missing.join(", ")}`);
 }
 
-export function buildApp(depsOverride?: Partial<RunSynthesisDeps>): Express {
+export function buildApp(depsOverride?: RunSynthesisDeps): Express {
   const app = express();
   app.use(express.json({ limit: "4mb" }));
   app.get("/healthz", (_req, res) => {
     res.json({ ok: true });
   });
 
-  if (isCompleteDeps(depsOverride)) {
+  if (depsOverride !== undefined) {
+    assertRunSynthesisDeps(depsOverride);
     app.post("/synthesize", makeSynthesizeHandler(depsOverride));
   } else if (process.env.NODE_ENV !== "test") {
     app.post("/synthesize", makeSynthesizeHandler(buildProductionDeps()));

@@ -1,5 +1,6 @@
 import { generateText } from "ai";
 import { eigen, createEigenGateway, type EigenGatewayLanguageModel } from "@layr-labs/ai-gateway-provider";
+import { isUnknownRecord } from "../lib/guards";
 import { POLICY } from "../lib/policy";
 import type { StructuredModelOutput } from "../types";
 
@@ -60,8 +61,7 @@ function classifyCallError(e: unknown, parentSignal: AbortSignal | undefined): s
     if (e.message.startsWith("http_") || e.message === "malformed_response") return e.message;
     const eigenMatch = e.message.match(/Eigen Gateway API error \((\d+)\)/);
     if (eigenMatch) return `http_${eigenMatch[1]}`;
-    const status = (e as { statusCode?: number }).statusCode;
-    if (typeof status === "number") return `http_${status}`;
+    if (hasStatusCode(e)) return `http_${e.statusCode}`;
   }
   return "network_error";
 }
@@ -85,22 +85,30 @@ export function parseStructuredOutput(rawOutput: string): StructuredModelOutput 
   } catch {
     throw new Error("structured_output_invalid_json");
   }
-  if (!obj || typeof obj !== "object") throw new Error("structured_output_not_object");
-  const o = obj as Record<string, unknown>;
+  if (!isUnknownRecord(obj)) throw new Error("structured_output_not_object");
+  const o = obj;
   if (!Array.isArray(o.claims)) throw new Error("structured_output_missing_claims");
   if (typeof o.summary !== "string") throw new Error("structured_output_missing_summary");
   const claims: StructuredModelOutput["claims"] = [];
   for (const c of o.claims) {
-    if (!c || typeof c !== "object") throw new Error("structured_output_claim_not_object");
-    const cc = c as Record<string, unknown>;
+    if (!isUnknownRecord(c)) throw new Error("structured_output_claim_not_object");
+    const cc = c;
     if (typeof cc.statement !== "string") throw new Error("structured_output_claim_statement_not_string");
-    if (!Array.isArray(cc.supportingSourceIndices)) throw new Error("structured_output_claim_indices_not_array");
-    for (const idx of cc.supportingSourceIndices) {
-      if (typeof idx !== "number" || !Number.isInteger(idx) || idx < 0) {
-        throw new Error("structured_output_claim_index_not_nonneg_integer");
-      }
-    }
-    claims.push({ statement: cc.statement, supportingSourceIndices: cc.supportingSourceIndices as number[] });
+    claims.push({ statement: cc.statement, supportingSourceIndices: parseSupportingSourceIndices(cc.supportingSourceIndices) });
   }
   return { claims, summary: o.summary };
+}
+
+function hasStatusCode(value: unknown): value is Error & { statusCode: number } {
+  return value instanceof Error && "statusCode" in value && typeof value.statusCode === "number";
+}
+
+function parseSupportingSourceIndices(value: unknown): number[] {
+  if (!Array.isArray(value)) throw new Error("structured_output_claim_indices_not_array");
+  return value.map((idx) => {
+    if (typeof idx !== "number" || !Number.isInteger(idx) || idx < 0) {
+      throw new Error("structured_output_claim_index_not_nonneg_integer");
+    }
+    return idx;
+  });
 }

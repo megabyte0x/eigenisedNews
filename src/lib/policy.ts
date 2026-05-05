@@ -1,13 +1,19 @@
+import { isUnknownArray, isUnknownRecord } from "./guards";
+
 function deepFreeze<T>(o: T): T {
   Object.freeze(o);
-  if (o && typeof o === "object") {
-    for (const v of Object.values(o as Record<string, unknown>)) {
-      if (v && (typeof v === "object" || typeof v === "function") && !Object.isFrozen(v)) {
-        deepFreeze(v);
-      }
+  for (const v of nestedValues(o)) {
+    if (v && (typeof v === "object" || typeof v === "function") && !Object.isFrozen(v)) {
+      deepFreeze(v);
     }
   }
   return o;
+}
+
+function nestedValues(value: unknown): readonly unknown[] {
+  if (isUnknownArray(value)) return value;
+  if (isUnknownRecord(value)) return Object.values(value);
+  return [];
 }
 
 export const POLICY = deepFreeze({
@@ -32,7 +38,6 @@ export const POLICY = deepFreeze({
   LLM_TEMPERATURE: 0,
 
   MAX_INPUTS: 12,
-  MAX_INPUT_BYTES: 2_000_000,
   MAX_TOPIC_LEN: 512,
 } as const);
 

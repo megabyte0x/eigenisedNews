@@ -1,30 +1,31 @@
-import type { SynthesizeResponse } from "../types";
-import { canonicalize } from "../lib/canonicalize";
-import { sha256Hex, sha256OfBytes } from "../lib/hash";
+import type { InputRecord, Manifest, ModelRun, RawModelOutput, SynthesizeResponse } from "../types";
+import { sha256Hex } from "../lib/hash";
+import { sha256OfCanonical } from "../lib/canonicalHash";
 import { providerModelKey } from "../lib/policy";
+import { isUnknownRecord, type UnknownRecord } from "../lib/guards";
 import { hashManifestWithPlaceholder } from "../manifest/build";
 import { recoverManifestSigner } from "../manifest/sign";
 import { parseStructuredOutput } from "../fanout/llmProxy";
 import { consensus, type ConsensusInput } from "../merger/consensus";
 import { fetchUrl as defaultFetchUrl, type FetchUrlResult } from "../fetchers/sourceFetcher";
 import { matchProvenance, type ProvenanceChecker } from "./provenance";
+import type { CheckResult } from "./types";
 
-export type CheckStatus = "pass" | "fail" | "skip";
-export type CheckResult = { name: string; status: CheckStatus; detail: string };
+export type { CheckResult, CheckStatus } from "./types";
 
 export type VerifyOptions = {
   refetchInputs?: boolean;
   fetchUrl?: (url: string) => Promise<FetchUrlResult>;
-  dashboardBase?: string;
   provenance?: ProvenanceChecker;
 };
 
-export async function verifyResponse(response: SynthesizeResponse, opts: VerifyOptions = {}): Promise<CheckResult[]> {
+export async function verifyResponse(response: unknown, opts: VerifyOptions = {}): Promise<CheckResult[]> {
   const out: CheckResult[] = [];
-  const schema = checkSchema(response);
-  out.push(schema);
-  if (schema.status === "fail") return out;
-  const m = response.manifest;
+  const parsed = parseResponse(response);
+  out.push(parsed.schema);
+  if (!parsed.ok) return out;
+  const typedResponse = parsed.response;
+  const m = typedResponse.manifest;
 
   const recomputed = hashManifestWithPlaceholder(m);
   out.push(
@@ -34,7 +35,7 @@ export async function verifyResponse(response: SynthesizeResponse, opts: VerifyO
   );
 
   try {
-    const recovered = await recoverManifestSigner(m.manifestSha256, response.signature);
+    const recovered = await recoverManifestSigner(m.manifestSha256, typedResponse.signature);
     out.push(
       recovered.toLowerCase() === m.deployment.agentAddress.toLowerCase()
         ? { name: "signature", status: "pass", detail: `recovered ${recovered}` }
@@ -45,28 +46,135 @@ export async function verifyResponse(response: SynthesizeResponse, opts: VerifyO
   }
 
   out.push(await verifyInputs(m, opts));
-  const rawCheck = verifyRawOutputs(m, response.raw);
+  const rawCheck = verifyRawOutputs(m, typedResponse.raw);
   out.push(rawCheck);
-  out.push(rawCheck.status === "fail" ? { name: "merge", status: "skip", detail: "raw_outputs failed" } : verifyMerge(m, response.raw));
+  out.push(rawCheck.status === "fail" ? { name: "merge", status: "skip", detail: "raw_outputs failed" } : verifyMerge(m, typedResponse.raw));
   out.push(await verifyProvenance(m, opts));
 
   return out;
 }
 
-function isRecord(x: unknown): x is Record<string, unknown> {
-  return !!x && typeof x === "object";
+type ParsedResponse = { ok: true; schema: CheckResult; response: SynthesizeResponse } | { ok: false; schema: CheckResult };
+
+function parseResponse(response: unknown): ParsedResponse {
+  if (!isUnknownRecord(response)) return { ok: false, schema: { name: "schema", status: "fail", detail: "response is not an object" } };
+  if (!isManifest(response.manifest)) return { ok: false, schema: { name: "schema", status: "fail", detail: "manifest missing or malformed" } };
+  if (typeof response.signature !== "string" || !response.signature.startsWith("0x")) {
+    return { ok: false, schema: { name: "schema", status: "fail", detail: "signature missing or invalid" } };
+  }
+  if (response.raw !== null && (!Array.isArray(response.raw) || !response.raw.every(isRawModelOutput))) {
+    return { ok: false, schema: { name: "schema", status: "fail", detail: "raw must be null or an array of raw model outputs" } };
+  }
+  return {
+    ok: true,
+    schema: { name: "schema", status: "pass", detail: "response shape is valid" },
+    response: { manifest: response.manifest, signature: response.signature as `0x${string}`, raw: response.raw },
+  };
 }
 
-function checkSchema(response: unknown): CheckResult {
-  if (!isRecord(response)) return { name: "schema", status: "fail", detail: "response is not an object" };
-  if (!isRecord(response.manifest)) return { name: "schema", status: "fail", detail: "manifest missing or not an object" };
-  if (typeof response.signature !== "string" || !response.signature.startsWith("0x")) {
-    return { name: "schema", status: "fail", detail: "signature missing or invalid" };
-  }
-  if (response.raw !== null && !Array.isArray(response.raw)) {
-    return { name: "schema", status: "fail", detail: "raw must be null or an array" };
-  }
-  return { name: "schema", status: "pass", detail: "response shape is valid" };
+function isManifest(value: unknown): value is Manifest {
+  if (!isUnknownRecord(value)) return false;
+  return (
+    value.schemaVersion === "1" &&
+    typeof value.rulesetVersion === "string" &&
+    isDeployment(value.deployment) &&
+    isRequestRecord(value.request) &&
+    Array.isArray(value.inputs) &&
+    value.inputs.every(isInputRecord) &&
+    Array.isArray(value.models) &&
+    value.models.every(isModelRun) &&
+    isMerge(value.merge) &&
+    typeof value.brief === "string" &&
+    typeof value.briefSha256 === "string" &&
+    typeof value.timestamp === "string" &&
+    typeof value.manifestSha256 === "string"
+  );
+}
+
+function isDeployment(value: unknown): value is Manifest["deployment"] {
+  return (
+    isUnknownRecord(value) &&
+    typeof value.appId === "string" &&
+    typeof value.agentAddress === "string" &&
+    typeof value.imageDigest === "string" &&
+    typeof value.commitSha === "string" &&
+    isDeploymentEnvironment(value.environment)
+  );
+}
+
+function isDeploymentEnvironment(value: unknown): value is Manifest["deployment"]["environment"] {
+  return value === "sepolia" || value === "mainnet-alpha" || value === "local";
+}
+
+function isRequestRecord(value: unknown): value is Manifest["request"] {
+  return isUnknownRecord(value) && typeof value.topic === "string" && typeof value.requestHash === "string";
+}
+
+function isInputRecord(value: unknown): value is InputRecord {
+  return (
+    isUnknownRecord(value) &&
+    typeof value.index === "number" &&
+    (value.kind === "url" || value.kind === "text") &&
+    optionalString(value, "url") &&
+    (typeof value.contentSha256 === "string" || value.contentSha256 === null) &&
+    optionalString(value, "fetchedAt") &&
+    typeof value.byteLength === "number" &&
+    (typeof value.error === "string" || value.error === null)
+  );
+}
+
+function isModelRun(value: unknown): value is ModelRun {
+  return (
+    isUnknownRecord(value) &&
+    typeof value.provider === "string" &&
+    typeof value.model === "string" &&
+    typeof value.version === "string" &&
+    typeof value.promptHash === "string" &&
+    (value.status === "ok" || value.status === "error") &&
+    (typeof value.rawOutputSha256 === "string" || value.rawOutputSha256 === null) &&
+    typeof value.parsedClaimCount === "number" &&
+    (typeof value.error === "string" || value.error === null)
+  );
+}
+
+function isMerge(value: unknown): value is Manifest["merge"] {
+  return (
+    isUnknownRecord(value) &&
+    typeof value.successfulModels === "number" &&
+    typeof value.totalModels === "number" &&
+    typeof value.thresholdMet === "boolean" &&
+    typeof value.consensusThreshold === "string" &&
+    Array.isArray(value.claims) &&
+    value.claims.every(isClaim) &&
+    Array.isArray(value.minorityClaims) &&
+    value.minorityClaims.every(isClaim)
+  );
+}
+
+function isClaim(value: unknown): value is Manifest["merge"]["claims"][number] {
+  return (
+    isUnknownRecord(value) &&
+    typeof value.id === "string" &&
+    typeof value.statement === "string" &&
+    stringArray(value.supportingModels) &&
+    numberArray(value.supportingSourceIndices)
+  );
+}
+
+function isRawModelOutput(value: unknown): value is RawModelOutput {
+  return isUnknownRecord(value) && typeof value.provider === "string" && typeof value.model === "string" && typeof value.rawOutput === "string";
+}
+
+function optionalString(value: UnknownRecord, key: string): boolean {
+  return !(key in value) || value[key] === undefined || typeof value[key] === "string";
+}
+
+function stringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((item) => typeof item === "string");
+}
+
+function numberArray(value: unknown): value is number[] {
+  return Array.isArray(value) && value.every((item) => typeof item === "number");
 }
 
 function verifyRawOutputs(m: SynthesizeResponse["manifest"], raw: SynthesizeResponse["raw"]): CheckResult {
@@ -146,7 +254,7 @@ function verifyMerge(m: SynthesizeResponse["manifest"], raw: SynthesizeResponse[
     }
   }
   const merged = consensus(consensusInput);
-  const eq = (a: unknown, b: unknown) => sha256OfBytes(canonicalize(a)) === sha256OfBytes(canonicalize(b));
+  const eq = (a: unknown, b: unknown) => sha256OfCanonical(a) === sha256OfCanonical(b);
   if (eq(merged.claims, m.merge.claims) && eq(merged.minorityClaims, m.merge.minorityClaims)) {
     return { name: "merge", status: "pass", detail: `${merged.claims.length} consensus + ${merged.minorityClaims.length} minority reproduced` };
   }

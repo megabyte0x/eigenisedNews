@@ -1,14 +1,9 @@
-import type { Claim } from "../types";
+import type { Claim, StructuredClaim } from "../types";
 import { normalizeClaim } from "./normalize";
-
-type RawClaim = {
-  statement: string;
-  supportingSourceIndices: number[];
-};
 
 export type ConsensusInput = {
   providerModel: string;
-  claims: RawClaim[];
+  claims: StructuredClaim[];
 }[];
 
 export type ConsensusOutput = {

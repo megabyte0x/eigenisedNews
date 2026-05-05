@@ -1,7 +1,8 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { isUnknownRecord } from "../lib/guards";
 import type { Manifest } from "../types";
-import type { CheckResult } from "./verify";
+import type { CheckResult } from "./types";
 
 export type ProvenanceEvidence = {
   appId: string;
@@ -35,7 +36,7 @@ export function matchProvenance(deployment: Manifest["deployment"], evidence: Pr
 function collectStrings(value: unknown, out: string[] = []): string[] {
   if (typeof value === "string") out.push(value);
   else if (Array.isArray(value)) for (const v of value) collectStrings(v, out);
-  else if (value && typeof value === "object") for (const v of Object.values(value)) collectStrings(v, out);
+  else if (isUnknownRecord(value)) for (const v of Object.values(value)) collectStrings(v, out);
   return out;
 }
 
@@ -50,7 +51,7 @@ export function evidenceFromUnknownJson(value: unknown): ProvenanceEvidence {
   const imageDigests = uniq([...allText.matchAll(/sha256:[a-fA-F0-9]{64}/g)].map((m) => m[0].toLowerCase()));
   const commitShas = uniq([...allText.matchAll(/\b[a-fA-F0-9]{40}\b/g)].map((m) => m[0].toLowerCase()));
 
-  const explicit = value && typeof value === "object" ? (value as Record<string, unknown>) : {};
+  const explicit = isUnknownRecord(value) ? value : {};
   const appId = typeof explicit.appId === "string" ? explicit.appId : addresses[0] ?? "";
 
   return { appId, imageDigests, commitShas, derivedAddresses: addresses };
