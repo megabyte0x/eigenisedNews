@@ -35,6 +35,16 @@ describe("verifyResponse — good fixture", () => {
     expect(results.find((r) => r.name === "signature")?.status).toBe("pass");
     expect(results.find((r) => r.name === "merge")?.status).toBe("pass");
   });
+
+  test("merge skips when raw outputs are omitted", async () => {
+    const response = clone(goodResponse);
+    response.raw = null;
+    const results = await verifyResponse(response);
+    expect(results.find((r) => r.name === "raw_outputs")?.status).toBe("skip");
+    expect(results.find((r) => r.name === "merge")?.status).toBe("skip");
+    expect(isAllPass(results)).toBe(true);
+    expect(isStrictPass(results)).toBe(false);
+  });
 });
 
 describe("verifyResponse — tampered fixtures", () => {
@@ -93,6 +103,7 @@ describe("verifyResponse — tampered fixtures", () => {
     });
     const results = await verifyResponse(tampered);
     expect(results.find((r) => r.name === "raw_outputs")?.status).toBe("fail");
+    expect(results.find((r) => r.name === "merge")?.status).toBe("skip");
   });
 
   test("raw_outputs fails on extra raw output from non-successful model", async () => {
@@ -102,7 +113,7 @@ describe("verifyResponse — tampered fixtures", () => {
     expect(results.find((r) => r.name === "raw_outputs")?.status).toBe("fail");
   });
 
-  test("tampered raw model output fails merge check", async () => {
+  test("tampered raw model output fails raw output check and skips merge", async () => {
     const tampered = clone(goodResponse);
     if (!tampered.raw || tampered.raw.length === 0) throw new Error("expected raw");
     // Replace one model's output with a different claim → re-run merge will produce a different result
@@ -111,7 +122,8 @@ describe("verifyResponse — tampered fixtures", () => {
       summary: "x",
     });
     const results = await verifyResponse(tampered);
-    expect(results.find((r) => r.name === "merge")?.status).toBe("fail");
+    expect(results.find((r) => r.name === "raw_outputs")?.status).toBe("fail");
+    expect(results.find((r) => r.name === "merge")?.status).toBe("skip");
   });
 
   test("inputs re-fetch detects content drift", async () => {

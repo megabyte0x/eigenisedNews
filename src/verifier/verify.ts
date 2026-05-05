@@ -49,8 +49,9 @@ export async function verifyResponse(response: SynthesizeResponse, opts: VerifyO
   }
 
   out.push(await verifyInputs(m, opts));
-  out.push(verifyRawOutputs(m, response.raw));
-  out.push(verifyMerge(m, response.raw));
+  const rawCheck = verifyRawOutputs(m, response.raw);
+  out.push(rawCheck);
+  out.push(rawCheck.status === "fail" ? { name: "merge", status: "skip", detail: "raw_outputs failed" } : verifyMerge(m, response.raw));
 
   return out;
 }
