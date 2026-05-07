@@ -1,5 +1,5 @@
 import { describe, test, expect } from "vitest";
-import { PROMPT_TEMPLATE, PROMPT_TEMPLATE_HASH, renderPrompt } from "../src/fanout/structuredPrompt";
+import { PROMPT_TEMPLATE, PROMPT_TEMPLATE_HASH, renderPrompt, renderPromptForModel } from "../src/fanout/structuredPrompt";
 
 describe("structuredPrompt", () => {
   test("PROMPT_TEMPLATE_HASH is sha256-prefixed and stable", () => {
@@ -38,5 +38,23 @@ describe("structuredPrompt", () => {
     const a = renderPrompt("t", [{ text: "x" }]);
     const b = renderPrompt("t", [{ text: "y" }]);
     expect(a.hash).not.toBe(b.hash);
+  });
+
+  test("renderPromptForModel leaves small GPT-4o prompts unchanged", () => {
+    const base = renderPrompt("t", [{ text: "small input" }]);
+    const modelPrompt = renderPromptForModel({ provider: "openai", model: "gpt-4o", topic: "t", inputs: [{ text: "small input" }] });
+    expect(modelPrompt).toEqual(base);
+  });
+
+  test("renderPromptForModel compacts only oversized GPT-4o prompts", () => {
+    const bigInput = `  ${"alpha ".repeat(10_000)}omega  `;
+    const openaiPrompt = renderPromptForModel({ provider: "openai", model: "gpt-4o", topic: "t", inputs: [{ text: bigInput }] });
+    const anthropicPrompt = renderPromptForModel({ provider: "anthropic", model: "claude-sonnet-4.6", topic: "t", inputs: [{ text: bigInput }] });
+
+    expect(openaiPrompt.text.length).toBeLessThan(anthropicPrompt.text.length);
+    expect(openaiPrompt.text).toContain("truncated for openai/gpt-4o context window");
+    expect(openaiPrompt.text).toContain("alpha alpha alpha");
+    expect(openaiPrompt.text).not.toContain("  ");
+    expect(anthropicPrompt.text).not.toContain("truncated for openai/gpt-4o context window");
   });
 });

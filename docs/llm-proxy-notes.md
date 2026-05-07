@@ -37,11 +37,10 @@ From `src/lib/policy.ts`:
 | provider/model | source |
 |---|---|
 | `anthropic/claude-sonnet-4.6` | confirmed in Notion + npm README |
-| `anthropic/claude-opus-4.7` | confirmed in Notion |
 | `openai/gpt-4o` | confirmed in npm README ("Using Multiple Models" example) |
 | `google/gemini-2.5-pro` | inferred from "OpenAI-compatible passthrough via Vercel AI Gateway" |
 
-`MIN_SUCCESS_COUNT = 3`. If the `google/gemini-2.5-pro` slug turns out to be wrong, the threshold is still met by the three confirmed models.
+`MIN_SUCCESS_COUNT = 2` for the active three-model set.
 
 ## Local dev (no TEE)
 

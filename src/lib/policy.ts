@@ -22,11 +22,10 @@ export const POLICY = deepFreeze({
 
   MODEL_SET: [
     { provider: "anthropic", model: "claude-sonnet-4.6", version: "v1" },
-    { provider: "anthropic", model: "claude-opus-4.7",   version: "v1" },
-    { provider: "openai",    model: "gpt-4o",             version: "v1" },
-    { provider: "google",    model: "gemini-2.5-pro",     version: "v1" },
+    { provider: "openai", model: "gpt-4o", version: "v1" },
+    { provider: "google", model: "gemini-2.5-pro", version: "v1" },
   ],
-  MIN_SUCCESS_COUNT: 3,
+  MIN_SUCCESS_COUNT: 2,
 
   FETCH_TIMEOUT_MS: 8_000,
   FETCH_MAX_BYTES: 2_000_000,

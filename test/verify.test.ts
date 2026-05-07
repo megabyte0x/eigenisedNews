@@ -2,6 +2,8 @@ import { describe, test, expect, beforeAll } from "vitest";
 import { verifyResponse, isAllPass, isStrictPass } from "../src/verifier/verify";
 import type { SynthesizeResponse } from "../src/types";
 import { FIXED_TS, clone, makeGoodResponse } from "./helpers/verifierFixture";
+import { runSynthesis, type RunSynthesisDeps } from "../src/pipeline";
+import { privateKeyToAccount, generatePrivateKey } from "viem/accounts";
 
 let goodResponse: SynthesizeResponse;
 
@@ -45,6 +47,45 @@ describe("verifyResponse — good fixture", () => {
     expect(isAllPass(results)).toBe(true);
     expect(isStrictPass(results)).toBe(false);
   });
+
+  test("raw output verification accepts fenced JSON with runtime-matching semantics", async () => {
+    const account = privateKeyToAccount(generatePrivateKey());
+    const deps: RunSynthesisDeps = {
+      fetchUrl: async (url) => ({
+        kind: "url",
+        url,
+        contentSha256: "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+        text: `body of ${url}`,
+        fetchedAt: FIXED_TS,
+        byteLength: 16,
+        error: null,
+      }),
+      callModel: async ({ provider, model }) => ({
+        rawOutput: `\`\`\`json\n${JSON.stringify({
+          claims: [{ statement: "the sky is blue", supportingSourceIndices: [0] }],
+          summary: `${provider}/${model}`,
+        })}\n\`\`\``,
+        latencyMs: 5,
+      }),
+      now: () => FIXED_TS,
+      deployment: {
+        appId: "0xapp",
+        agentAddress: account.address,
+        imageDigest: "sha256:img",
+        commitSha: "abc",
+        environment: "local",
+      },
+      sign: (h) => account.signMessage({ message: h }),
+    };
+
+    const response = await runSynthesis(deps, { topic: "t", sources: [{ text: "src" }] });
+    if (response.status !== "ok") throw new Error("setup: synthesis did not succeed");
+
+    const results = await verifyResponse({ manifest: response.manifest, signature: response.signature, raw: response.raw });
+    expect(results.find((r) => r.name === "raw_outputs")?.status).toBe("pass");
+    expect(results.find((r) => r.name === "merge")?.status).toBe("pass");
+    expect(isAllPass(results)).toBe(true);
+  });
 });
 
 describe("verifyResponse — tampered fixtures", () => {
@@ -86,7 +127,6 @@ describe("verifyResponse — tampered fixtures", () => {
     const tampered = clone(goodResponse);
     // Edit a non-hashed-into-itself field, then recompute hash to make hash check pass — but signature was over old hash, so recovery fails.
     tampered.manifest.brief = "tampered brief";
-    // Recompute the hash so manifest_hash passes
     const { hashManifestWithPlaceholder } = await import("../src/manifest/build");
     tampered.manifest.manifestSha256 = hashManifestWithPlaceholder(tampered.manifest);
     const results = await verifyResponse(tampered);
@@ -122,7 +162,6 @@ describe("verifyResponse — tampered fixtures", () => {
   test("tampered raw model output fails raw output check and skips merge", async () => {
     const tampered = clone(goodResponse);
     if (!tampered.raw || tampered.raw.length === 0) throw new Error("expected raw");
-    // Replace one model's output with a different claim → re-run merge will produce a different result
     tampered.raw[0].rawOutput = JSON.stringify({
       claims: [{ statement: "completely different", supportingSourceIndices: [0] }],
       summary: "x",

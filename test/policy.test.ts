@@ -13,8 +13,8 @@ describe("POLICY", () => {
     const n = POLICY.MODEL_SET.length;
     expect(POLICY.MIN_SUCCESS_COUNT).toBe(Math.floor(n / 2) + 1);
   });
-  test("MODEL_SET has 4 entries with required fields", () => {
-    expect(POLICY.MODEL_SET).toHaveLength(4);
+  test("MODEL_SET has 3 entries with required fields", () => {
+    expect(POLICY.MODEL_SET).toHaveLength(3);
     for (const m of POLICY.MODEL_SET) {
       expect(m.provider).toBeTruthy();
       expect(m.model).toBeTruthy();
