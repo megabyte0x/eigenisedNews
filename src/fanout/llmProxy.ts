@@ -11,6 +11,7 @@ export type CallModelArgs = {
   prompt: string;
   retries?: number;
   timeoutMs?: number;
+  maxOutputTokens?: number;
   signal?: AbortSignal;
   modelFactory?: (modelId: string) => EigenGatewayLanguageModel;
   onDebugInfo?: (info: CallErrorDebugInfo) => void;
@@ -81,6 +82,7 @@ export async function callModel(args: CallModelArgs): Promise<CallModelResult> {
         model: factory(modelId),
         prompt: args.prompt,
         temperature: POLICY.LLM_TEMPERATURE,
+        maxOutputTokens: args.maxOutputTokens,
         abortSignal: controller.signal,
       });
       if (typeof result.text !== "string") throw new Error("malformed_response");

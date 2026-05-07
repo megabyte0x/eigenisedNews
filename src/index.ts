@@ -58,7 +58,7 @@ function buildProductionDeps(): RunSynthesisDeps {
   log("info", "boot", { agent: address, appId: deployment.appId, env: deployment.environment });
   return {
     fetchUrl,
-    callModel: ({ provider, model, prompt, timeoutMs }) => callModel({ provider, model, prompt, timeoutMs, onDebugInfo: logCallErrorDebugInfo }),
+    callModel: ({ provider, model, prompt, timeoutMs, maxOutputTokens }) => callModel({ provider, model, prompt, timeoutMs, maxOutputTokens, onDebugInfo: logCallErrorDebugInfo }),
     onStructuredOutputDebugInfo: logStructuredOutputDebugInfo,
     now: () => new Date().toISOString(),
     deployment,

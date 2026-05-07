@@ -25,7 +25,7 @@ import type { Sha256 } from "./lib/hash";
 
 export type RunSynthesisDeps = {
   fetchUrl: (url: string) => Promise<FetchUrlResult>;
-  callModel: (args: { provider: string; model: string; prompt: string; timeoutMs?: number }) => Promise<{ rawOutput: string; latencyMs: number }>;
+  callModel: (args: { provider: string; model: string; prompt: string; timeoutMs?: number; maxOutputTokens?: number }) => Promise<{ rawOutput: string; latencyMs: number }>;
   now: () => string;
   deployment: Manifest["deployment"];
   sign: ManifestSigner;
@@ -236,6 +236,7 @@ export async function runArticleResearch(deps: RunSynthesisDeps, request: NewsRe
     prompt: plannerPrompt,
     promptHash: plannerPromptHash,
     timeoutMs: POLICY.RESEARCH_LLM_TIMEOUT_MS,
+    maxOutputTokens: POLICY.RESEARCH_LLM_MAX_OUTPUT_TOKENS,
   });
   const plannerRawOutputSha256 = sha256Hex(plannerRaw.rawOutput);
   agentRuns.push({
@@ -259,6 +260,7 @@ export async function runArticleResearch(deps: RunSynthesisDeps, request: NewsRe
     prompt: proPrompt,
     promptHash: proPromptHash,
     timeoutMs: POLICY.RESEARCH_LLM_TIMEOUT_MS,
+    maxOutputTokens: POLICY.RESEARCH_LLM_MAX_OUTPUT_TOKENS,
   });
   agentRuns.push({
     role: "pro",
@@ -280,6 +282,7 @@ export async function runArticleResearch(deps: RunSynthesisDeps, request: NewsRe
     prompt: contraPrompt,
     promptHash: contraPromptHash,
     timeoutMs: POLICY.RESEARCH_LLM_TIMEOUT_MS,
+    maxOutputTokens: POLICY.RESEARCH_LLM_MAX_OUTPUT_TOKENS,
   });
   agentRuns.push({
     role: "contra",
@@ -313,7 +316,7 @@ type PreparedArticleContext = {
 
 async function callResearchAgent(
   deps: RunSynthesisDeps,
-  args: { requestId: string; stage: "main" | "pro" | "contra"; provider: string; model: string; prompt: string; promptHash: Sha256; timeoutMs: number },
+  args: { requestId: string; stage: "main" | "pro" | "contra"; provider: string; model: string; prompt: string; promptHash: Sha256; timeoutMs: number; maxOutputTokens: number },
 ): Promise<{ rawOutput: string; latencyMs: number }> {
   const startedAt = Date.now();
   log("info", "research_stage_started", {
@@ -323,11 +326,12 @@ async function callResearchAgent(
     provider: args.provider,
     model: args.model,
     timeoutMs: args.timeoutMs,
+    maxOutputTokens: args.maxOutputTokens,
     promptHash: args.promptHash,
     promptCharLength: args.prompt.length,
   });
   try {
-    const result = await deps.callModel({ provider: args.provider, model: args.model, prompt: args.prompt, timeoutMs: args.timeoutMs });
+    const result = await deps.callModel({ provider: args.provider, model: args.model, prompt: args.prompt, timeoutMs: args.timeoutMs, maxOutputTokens: args.maxOutputTokens });
     log("info", "research_stage_completed", {
       requestId: args.requestId,
       route: "/research",
@@ -335,6 +339,7 @@ async function callResearchAgent(
       provider: args.provider,
       model: args.model,
       timeoutMs: args.timeoutMs,
+      maxOutputTokens: args.maxOutputTokens,
       promptHash: args.promptHash,
       rawOutputSha256: sha256Hex(result.rawOutput),
       rawOutputByteLength: Buffer.byteLength(result.rawOutput, "utf8"),
@@ -350,6 +355,7 @@ async function callResearchAgent(
       provider: args.provider,
       model: args.model,
       timeoutMs: args.timeoutMs,
+      maxOutputTokens: args.maxOutputTokens,
       promptHash: args.promptHash,
       error: error instanceof Error ? error.message : String(error),
       latencyMs: Date.now() - startedAt,
@@ -442,6 +448,7 @@ function renderResearchPlannerPrompt(articleUrl: string, articleText: string): s
     "Create two research prompts for a news article URL.",
     "The first prompt must ask a pro agent to deeply research evidence that supports, backs, or strengthens the article's framing.",
     "The second prompt must ask a contra agent to deeply research evidence that challenges, weakens, or complicates the article's framing.",
+    "Keep each generated prompt under 600 characters and focused on the 3 strongest lines of inquiry.",
     "Return only JSON with keys proPrompt and contraPrompt. Do not include markdown.",
     `Article URL: ${articleUrl}`,
     "Article text:",
@@ -520,6 +527,7 @@ function renderPerspectiveResearchPrompt(role: "pro" | "contra", researchPrompt:
     `Research the ${stance} side of the article using the provided context first.`,
     "Use evidence, cite concrete facts from the article text, and clearly separate facts from inference.",
     "If the article concerns markets, companies, earnings, policy, or governance, mention relevant evidence from the article and identify what further external evidence would be needed.",
+    "Keep the answer concise: at most 6 bullets plus one short verdict, under 500 words total.",
     "Research prompt:",
     researchPrompt,
     `Article URL: ${articleUrl}`,
@@ -531,7 +539,13 @@ function renderPerspectiveResearchPrompt(role: "pro" | "contra", researchPrompt:
 function parseResearchPrompts(rawOutput: string): { proPrompt: string; contraPrompt: string } {
   const parsed = JSON.parse(rawOutput) as unknown;
   if (!isResearchPromptObject(parsed)) throw new Error("research_prompt_parse_failed");
-  return { proPrompt: parsed.proPrompt.trim(), contraPrompt: parsed.contraPrompt.trim() };
+  return { proPrompt: compactResearchPrompt(parsed.proPrompt), contraPrompt: compactResearchPrompt(parsed.contraPrompt) };
+}
+
+function compactResearchPrompt(prompt: string): string {
+  const normalized = prompt.replace(/\s+/g, " ").trim();
+  if (normalized.length <= 700) return normalized;
+  return `${normalized.slice(0, 700)}...`;
 }
 
 function isResearchPromptObject(value: unknown): value is { proPrompt: string; contraPrompt: string } {
