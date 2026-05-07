@@ -32,6 +32,9 @@ export const POLICY = deepFreeze({
   FETCH_RETRIES: 1,
   FETCH_USER_AGENT: "eigenisedNews/1 (+verify.eigencloud.xyz)",
 
+  RESEARCH_ARTICLE_CONTEXT_MAX_CHARS: 12_000,
+  RESEARCH_LLM_TIMEOUT_MS: 120_000,
+
   LLM_TIMEOUT_MS: 45_000,
   LLM_RETRIES: 1,
   LLM_TEMPERATURE: 0,

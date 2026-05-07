@@ -13,6 +13,7 @@ import type {
 import { POLICY, providerModelKey, type ModelSpec } from "./lib/policy";
 import { sha256OfCanonical } from "./lib/canonicalHash";
 import { sha256Hex } from "./lib/hash";
+import { log } from "./lib/log";
 import type { FetchUrlResult } from "./fetchers/sourceFetcher";
 import { hashText } from "./fetchers/sourceFetcher";
 import { renderPromptForModel } from "./fanout/structuredPrompt";
@@ -24,7 +25,7 @@ import type { Sha256 } from "./lib/hash";
 
 export type RunSynthesisDeps = {
   fetchUrl: (url: string) => Promise<FetchUrlResult>;
-  callModel: (args: { provider: string; model: string; prompt: string }) => Promise<{ rawOutput: string; latencyMs: number }>;
+  callModel: (args: { provider: string; model: string; prompt: string; timeoutMs?: number }) => Promise<{ rawOutput: string; latencyMs: number }>;
   now: () => string;
   deployment: Manifest["deployment"];
   sign: ManifestSigner;
@@ -171,7 +172,13 @@ export async function runArticleResearch(deps: RunSynthesisDeps, request: NewsRe
   if (articleUrl.length === 0) return { status: "validation_error", error: "article_url_required" };
   if (!isHttpUrl(articleUrl)) return { status: "validation_error", error: "article_url_invalid" };
 
+  const requestId = request.requestId ?? "standalone";
+  const articleUrlHash = sha256Hex(articleUrl);
+  const articleHost = new URL(articleUrl).host;
+  const fetchStartedAt = Date.now();
+  log("info", "research_fetch_started", { requestId, route: "/research", articleHost, articleUrlHash });
   const article = await deps.fetchUrl(articleUrl);
+  const fetchLatencyMs = Date.now() - fetchStartedAt;
   const articleRecord: NewsResearchResponse["article"] = {
     url: article.url,
     contentSha256: article.contentSha256,
@@ -179,14 +186,57 @@ export async function runArticleResearch(deps: RunSynthesisDeps, request: NewsRe
     byteLength: article.byteLength,
     error: article.error,
   };
-  if (article.error) return { status: "fetch_error", error: article.error, article: articleRecord };
+  const fetchedArticleUrlHash = sha256Hex(article.url);
+  if (article.error) {
+    log("warn", "research_fetch_failed", {
+      requestId,
+      route: "/research",
+      articleHost: new URL(article.url).host,
+      articleUrlHash: fetchedArticleUrlHash,
+      error: article.error,
+      byteLength: article.byteLength,
+      latencyMs: fetchLatencyMs,
+    });
+    return { status: "fetch_error", error: article.error, article: articleRecord };
+  }
+  log("info", "research_fetch_completed", {
+    requestId,
+    route: "/research",
+    articleHost: new URL(article.url).host,
+    articleUrlHash: fetchedArticleUrlHash,
+    contentSha256: article.contentSha256,
+    byteLength: article.byteLength,
+    latencyMs: fetchLatencyMs,
+  });
 
   const spec = POLICY.MODEL_SET[0];
   const agentRuns: NewsResearchAgentRun[] = [];
 
-  const plannerPrompt = renderResearchPlannerPrompt(article.url, article.text);
+  const articleContext = prepareArticleContext(article.text);
+  log("info", "research_context_prepared", {
+    requestId,
+    route: "/research",
+    articleHost: new URL(article.url).host,
+    articleUrlHash: fetchedArticleUrlHash,
+    source: articleContext.source,
+    originalCharLength: articleContext.originalCharLength,
+    normalizedCharLength: articleContext.normalizedCharLength,
+    contextCharLength: articleContext.text.length,
+    truncated: articleContext.truncated,
+    maxChars: POLICY.RESEARCH_ARTICLE_CONTEXT_MAX_CHARS,
+  });
+
+  const plannerPrompt = renderResearchPlannerPrompt(article.url, articleContext.text);
   const plannerPromptHash = sha256Hex(plannerPrompt);
-  const plannerRaw = await deps.callModel({ provider: spec.provider, model: spec.model, prompt: plannerPrompt });
+  const plannerRaw = await callResearchAgent(deps, {
+    requestId,
+    stage: "main",
+    provider: spec.provider,
+    model: spec.model,
+    prompt: plannerPrompt,
+    promptHash: plannerPromptHash,
+    timeoutMs: POLICY.RESEARCH_LLM_TIMEOUT_MS,
+  });
   const plannerRawOutputSha256 = sha256Hex(plannerRaw.rawOutput);
   agentRuns.push({
     role: "main",
@@ -199,9 +249,17 @@ export async function runArticleResearch(deps: RunSynthesisDeps, request: NewsRe
   });
   const prompts = parseResearchPrompts(plannerRaw.rawOutput);
 
-  const proPrompt = renderPerspectiveResearchPrompt("pro", prompts.proPrompt, article.url, article.text);
+  const proPrompt = renderPerspectiveResearchPrompt("pro", prompts.proPrompt, article.url, articleContext.text);
   const proPromptHash = sha256Hex(proPrompt);
-  const proRaw = await deps.callModel({ provider: spec.provider, model: spec.model, prompt: proPrompt });
+  const proRaw = await callResearchAgent(deps, {
+    requestId,
+    stage: "pro",
+    provider: spec.provider,
+    model: spec.model,
+    prompt: proPrompt,
+    promptHash: proPromptHash,
+    timeoutMs: POLICY.RESEARCH_LLM_TIMEOUT_MS,
+  });
   agentRuns.push({
     role: "pro",
     provider: spec.provider,
@@ -212,9 +270,17 @@ export async function runArticleResearch(deps: RunSynthesisDeps, request: NewsRe
     error: null,
   });
 
-  const contraPrompt = renderPerspectiveResearchPrompt("contra", prompts.contraPrompt, article.url, article.text);
+  const contraPrompt = renderPerspectiveResearchPrompt("contra", prompts.contraPrompt, article.url, articleContext.text);
   const contraPromptHash = sha256Hex(contraPrompt);
-  const contraRaw = await deps.callModel({ provider: spec.provider, model: spec.model, prompt: contraPrompt });
+  const contraRaw = await callResearchAgent(deps, {
+    requestId,
+    stage: "contra",
+    provider: spec.provider,
+    model: spec.model,
+    prompt: contraPrompt,
+    promptHash: contraPromptHash,
+    timeoutMs: POLICY.RESEARCH_LLM_TIMEOUT_MS,
+  });
   agentRuns.push({
     role: "contra",
     provider: spec.provider,
@@ -235,6 +301,61 @@ export async function runArticleResearch(deps: RunSynthesisDeps, request: NewsRe
     mainSummary: composeResearchSummary(proRaw.rawOutput, contraRaw.rawOutput),
     agentRuns,
   };
+}
+
+type PreparedArticleContext = {
+  text: string;
+  source: "html_to_text" | "plain_text";
+  originalCharLength: number;
+  normalizedCharLength: number;
+  truncated: boolean;
+};
+
+async function callResearchAgent(
+  deps: RunSynthesisDeps,
+  args: { requestId: string; stage: "main" | "pro" | "contra"; provider: string; model: string; prompt: string; promptHash: Sha256; timeoutMs: number },
+): Promise<{ rawOutput: string; latencyMs: number }> {
+  const startedAt = Date.now();
+  log("info", "research_stage_started", {
+    requestId: args.requestId,
+    route: "/research",
+    stage: args.stage,
+    provider: args.provider,
+    model: args.model,
+    timeoutMs: args.timeoutMs,
+    promptHash: args.promptHash,
+    promptCharLength: args.prompt.length,
+  });
+  try {
+    const result = await deps.callModel({ provider: args.provider, model: args.model, prompt: args.prompt, timeoutMs: args.timeoutMs });
+    log("info", "research_stage_completed", {
+      requestId: args.requestId,
+      route: "/research",
+      stage: args.stage,
+      provider: args.provider,
+      model: args.model,
+      timeoutMs: args.timeoutMs,
+      promptHash: args.promptHash,
+      rawOutputSha256: sha256Hex(result.rawOutput),
+      rawOutputByteLength: Buffer.byteLength(result.rawOutput, "utf8"),
+      latencyMs: Date.now() - startedAt,
+      modelLatencyMs: result.latencyMs,
+    });
+    return result;
+  } catch (error) {
+    log("error", "research_stage_failed", {
+      requestId: args.requestId,
+      route: "/research",
+      stage: args.stage,
+      provider: args.provider,
+      model: args.model,
+      timeoutMs: args.timeoutMs,
+      promptHash: args.promptHash,
+      error: error instanceof Error ? error.message : String(error),
+      latencyMs: Date.now() - startedAt,
+    });
+    throw error;
+  }
 }
 
 type RichInput = InputRecord & { text: string };
@@ -326,6 +447,70 @@ function renderResearchPlannerPrompt(articleUrl: string, articleText: string): s
     "Article text:",
     articleText,
   ].join("\n\n");
+}
+
+function prepareArticleContext(text: string): PreparedArticleContext {
+  const html = looksLikeHtml(text);
+  const readableText = html ? htmlToReadableText(text) : text;
+  const normalized = decodeHtmlEntities(readableText).replace(/\s+/g, " ").trim();
+  const maxChars = POLICY.RESEARCH_ARTICLE_CONTEXT_MAX_CHARS;
+  if (normalized.length <= maxChars) {
+    return { text: normalized, source: html ? "html_to_text" : "plain_text", originalCharLength: text.length, normalizedCharLength: normalized.length, truncated: false };
+  }
+  return {
+    text: `${normalized.slice(0, maxChars)}\n...[truncated for research context: kept first ${maxChars} of ${normalized.length} normalized chars]`,
+    source: html ? "html_to_text" : "plain_text",
+    originalCharLength: text.length,
+    normalizedCharLength: normalized.length,
+    truncated: true,
+  };
+}
+
+function looksLikeHtml(text: string): boolean {
+  return /<html[\s>]/i.test(text) || /<body[\s>]/i.test(text) || /<!doctype html/i.test(text);
+}
+
+function htmlToReadableText(html: string): string {
+  return html
+    .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, " ")
+    .replace(/<noscript\b[^>]*>[\s\S]*?<\/noscript>/gi, " ")
+    .replace(/<svg\b[^>]*>[\s\S]*?<\/svg>/gi, " ")
+    .replace(/<head\b[^>]*>[\s\S]*?<\/head>/gi, " ")
+    .replace(/<\/(p|div|section|article|header|footer|li|h[1-6]|br)>/gi, "\n")
+    .replace(/<[^>]+>/g, " ");
+}
+
+function decodeHtmlEntities(text: string): string {
+  const named: Record<string, string> = {
+    amp: "&",
+    apos: "'",
+    gt: ">",
+    lt: "<",
+    nbsp: " ",
+    quot: '"',
+  };
+  return text.replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (match, entity: string) => {
+    const lower = entity.toLowerCase();
+    if (lower.startsWith("#x")) {
+      const codePoint = Number.parseInt(lower.slice(2), 16);
+      return decodeCodePoint(codePoint, match);
+    }
+    if (lower.startsWith("#")) {
+      const codePoint = Number.parseInt(lower.slice(1), 10);
+      return decodeCodePoint(codePoint, match);
+    }
+    return named[lower] ?? match;
+  });
+}
+
+function decodeCodePoint(codePoint: number, fallback: string): string {
+  if (!Number.isFinite(codePoint)) return fallback;
+  try {
+    return String.fromCodePoint(codePoint);
+  } catch {
+    return fallback;
+  }
 }
 
 function renderPerspectiveResearchPrompt(role: "pro" | "contra", researchPrompt: string, articleUrl: string, articleText: string): string {

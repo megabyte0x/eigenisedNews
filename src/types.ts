@@ -78,6 +78,7 @@ export type SynthesizeResponse = {
 
 export type NewsResearchRequest = {
   articleUrl: string;
+  requestId?: string;
 };
 
 export type NewsResearchAgentRole = "main" | "pro" | "contra";

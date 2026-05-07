@@ -4,6 +4,7 @@ import { runArticleResearch, runSynthesis, type RunSynthesisDeps } from "../src/
 import { recoverManifestSigner } from "../src/manifest/sign";
 import { canonicalize } from "../src/lib/canonicalize";
 import { sha256OfBytes } from "../src/lib/hash";
+import { POLICY } from "../src/lib/policy";
 import type { SynthesizeRequest } from "../src/types";
 import { renderPrompt, renderPromptForModel } from "../src/fanout/structuredPrompt";
 
@@ -213,6 +214,7 @@ describe("runSynthesis", () => {
 describe("runArticleResearch", () => {
   test("fetches one article URL and runs main, pro, and contra agents in order", async () => {
     const callPrompts: string[] = [];
+    const callTimeouts: Array<number | undefined> = [];
     const deps = makeDeps({
       fetchUrl: async (url) => ({
         kind: "url",
@@ -223,8 +225,9 @@ describe("runArticleResearch", () => {
         byteLength: 94,
         error: null,
       }),
-      callModel: async ({ prompt }) => {
+      callModel: async ({ prompt, timeoutMs }) => {
         callPrompts.push(prompt);
+        callTimeouts.push(timeoutMs);
         if (callPrompts.length === 1) {
           return {
             rawOutput: JSON.stringify({
@@ -253,6 +256,11 @@ describe("runArticleResearch", () => {
     expect(callPrompts[0]).toContain("Create two research prompts");
     expect(callPrompts[1]).toContain("Research evidence that supports");
     expect(callPrompts[2]).toContain("Research evidence that challenges");
+    expect(callTimeouts).toEqual([
+      POLICY.RESEARCH_LLM_TIMEOUT_MS,
+      POLICY.RESEARCH_LLM_TIMEOUT_MS,
+      POLICY.RESEARCH_LLM_TIMEOUT_MS,
+    ]);
   });
 
   test("rejects non-url article input before model calls", async () => {
