@@ -43,7 +43,7 @@ describe("provenance evidence extraction", () => {
       agentAddress: "0xdef0000000000000000000000000000000000000",
       imageDigest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       commitSha: "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
-      environment: "sepolia",
+        environment: "mainnet-alpha",
     });
 
     expect(calls).toContainEqual(["ecloud", "compute", "app", "releases", "0xabc0000000000000000000000000000000000000", "--json", "--full"]);

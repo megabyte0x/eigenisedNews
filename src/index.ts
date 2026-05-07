@@ -33,7 +33,7 @@ function readDeployment(fallbackAddress: `0x${string}`): Manifest["deployment"] 
 export function readDeploymentEnvironment(value: string | undefined): Manifest["deployment"]["environment"] {
   const normalized = value?.trim();
   if (!normalized) return "local";
-  if (normalized === "sepolia" || normalized === "mainnet-alpha" || normalized === "local") return normalized;
+  if (normalized === "mainnet-alpha" || normalized === "local") return normalized;
   throw new Error(`EIGEN_ENVIRONMENT invalid: ${value}`);
 }
 

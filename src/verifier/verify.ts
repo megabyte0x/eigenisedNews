@@ -103,7 +103,7 @@ function isDeployment(value: unknown): value is Manifest["deployment"] {
 }
 
 function isDeploymentEnvironment(value: unknown): value is Manifest["deployment"]["environment"] {
-  return value === "sepolia" || value === "mainnet-alpha" || value === "local";
+  return value === "mainnet-alpha" || value === "local";
 }
 
 function isRequestRecord(value: unknown): value is Manifest["request"] {

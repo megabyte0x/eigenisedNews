@@ -203,7 +203,7 @@ describe("verifyResponse — tampered fixtures", () => {
     const response = clone(goodResponse);
     response.manifest.deployment = {
       ...response.manifest.deployment,
-      environment: "sepolia",
+        environment: "mainnet-alpha",
       appId: "0xabc",
       imageDigest: "sha256:image",
       commitSha: "commit123",
@@ -226,7 +226,7 @@ describe("verifyResponse — tampered fixtures", () => {
     const response = clone(goodResponse);
     response.manifest.deployment = {
       ...response.manifest.deployment,
-      environment: "sepolia",
+        environment: "mainnet-alpha",
       appId: "0xabc",
       imageDigest: "sha256:expected",
       commitSha: "commit123",
