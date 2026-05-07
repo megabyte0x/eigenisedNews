@@ -1,6 +1,34 @@
 import { context } from "esbuild";
-import { mkdir } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
+
+function renderFrontendShell(runtimeConfig = {}) {
+  const runtimeConfigJson = JSON.stringify(runtimeConfig).replace(/</g, "\\u003c");
+  return `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>eigenisedNews research</title>
+    <meta
+      name="description"
+      content="Research news articles with EigenCompute agents that analyze pro and contra perspectives from the same source."
+    />
+    <link rel="stylesheet" href="/app.css" />
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="application/json" id="frontend-runtime-config">${runtimeConfigJson}</script>
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>`;
+}
+
+async function writeFrontendShell(outdir) {
+  const apiBaseUrl = process.env.FRONTEND_API_BASE_URL?.trim();
+  const runtimeConfig = apiBaseUrl ? { apiBaseUrl } : {};
+  await writeFile(resolve(process.cwd(), outdir, "index.html"), renderFrontendShell(runtimeConfig));
+}
 
 async function main() {
   const outdirArg = process.argv[2];
@@ -11,6 +39,7 @@ async function main() {
   const watch = process.argv.includes("--watch");
   const outfile = resolve(process.cwd(), outdirArg, "app.js");
   await mkdir(dirname(outfile), { recursive: true });
+  await writeFrontendShell(outdirArg);
 
   const buildContext = await context({
     entryPoints: ["src/frontend/main.tsx"],

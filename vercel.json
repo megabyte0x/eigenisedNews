@@ -1,0 +1,23 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "buildCommand": "npm run build:frontend",
+  "outputDirectory": "dist/public",
+  "rewrites": [
+    {
+      "source": "/",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/research",
+      "destination": "http://35.204.200.15:3000/research"
+    },
+    {
+      "source": "/synthesize",
+      "destination": "http://35.204.200.15:3000/synthesize"
+    },
+    {
+      "source": "/healthz",
+      "destination": "http://35.204.200.15:3000/healthz"
+    }
+  ]
+}
