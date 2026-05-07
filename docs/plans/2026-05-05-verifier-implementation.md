@@ -435,7 +435,7 @@ test("provenance passes when injected evidence matches deployment", async () => 
   const response = clone(goodResponse);
   response.manifest.deployment = {
     ...response.manifest.deployment,
-    environment: "sepolia",
+    environment: "mainnet-alpha",
     appId: "0xabc",
     imageDigest: "sha256:image",
     commitSha: "commit123",
@@ -458,7 +458,7 @@ test("provenance fails when image digest is absent from evidence", async () => {
   const response = clone(goodResponse);
   response.manifest.deployment = {
     ...response.manifest.deployment,
-    environment: "sepolia",
+    environment: "mainnet-alpha",
     appId: "0xabc",
     imageDigest: "sha256:expected",
     commitSha: "commit123",
@@ -712,7 +712,7 @@ test("ecloud checker calls supported JSON commands with hex app id", async () =>
     agentAddress: "0xdef0000000000000000000000000000000000000",
     imageDigest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     commitSha: "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
-    environment: "sepolia",
+    environment: "mainnet-alpha",
   });
 
   expect(calls).toContainEqual(["ecloud", "compute", "app", "releases", "0xabc0000000000000000000000000000000000000", "--json", "--full"]);

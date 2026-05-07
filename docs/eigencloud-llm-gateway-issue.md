@@ -1,22 +1,22 @@
-# EigenCloud AI Gateway — JWT signature rejected for sepolia-prod TEE
+# EigenCloud AI Gateway — JWT signature rejected for a legacy testnet TEE
 
 **Filed by:** megabyte0x
 **Date:** 2026-04-28
 **App ID:** `0xc35c1d9555E5883Cb0915E02090A097478960734`
-**Network:** sepolia
+**Network:** legacy testnet
 **Repo:** <https://github.com/megabyte0x/eigenisedNews>
 
 ---
 
 ## Problem
 
-Every request from a sepolia-prod TEE through `@layr-labs/ai-gateway-provider` is rejected by both `ai-gateway-dev.eigencloud.xyz` and `ai-gateway.eigencloud.xyz` with the same response:
+Every request from a legacy testnet TEE through `@layr-labs/ai-gateway-provider` is rejected by both `ai-gateway-dev.eigencloud.xyz` and `ai-gateway.eigencloud.xyz` with the same response:
 
 ```json
 {"error":{"code":401,"message":"invalid token: token signature is invalid: crypto/rsa: verification error","type":"unauthorized"}}
 ```
 
-The JWT is freshly issued by `eigenx-kms` via the standard TEE attestation flow inside the container (`AttestClient` from `@layr-labs/ecloud-sdk/attest`). Decoding the JWT (header + payload, signature unverified) shows all claims look correct — the rejection is at signature verification, not claims validation. This indicates the KMS signing key and the gateway verification key are out of sync for sepolia-prod TEEs.
+The JWT is freshly issued by `eigenx-kms` via the standard TEE attestation flow inside the container (`AttestClient` from `@layr-labs/ecloud-sdk/attest`). Decoding the JWT (header + payload, signature unverified) shows all claims look correct — the rejection is at signature verification, not claims validation. This indicates the KMS signing key and the gateway verification key are out of sync for those legacy testnet TEEs.
 
 The container itself is healthy (`/healthz` returns `200`), the synthesis pipeline runs end to end, and signed manifests are produced — only the LLM gateway leg fails.
 
@@ -25,10 +25,10 @@ The container itself is healthy (`/healthz` returns `200`), the synthesis pipeli
 | Field | Value |
 |---|---|
 | `ecloud-cli` | `@layr-labs/ecloud-cli/0.5.0` |
-| Network | `sepolia` |
+| Network | `legacy testnet` |
 | Instance type | `g1-standard-4t` |
 | TEE class | `GCP_INTEL_TDX` |
-| GCE project | `tee-compute-sepolia-prod` |
+| GCE project | `tee-compute-legacy-prod` |
 | GCE zone | `europe-west4-a` |
 | App ID | `0xc35c1d9555E5883Cb0915E02090A097478960734` |
 | TEE EVM address | `0x329f35dab35220a4316ab94406ac386583eec1c5` (path `m/44'/60'/0'/0/0`, derived from injected `MNEMONIC`) |
@@ -69,7 +69,7 @@ The container itself is healthy (`/healthz` returns `200`), the synthesis pipeli
       }
     },
     "gce": {
-      "project_id": "tee-compute-sepolia-prod",
+      "project_id": "tee-compute-legacy-prod",
       "project_number": "889537417991",
       "zone": "europe-west4-a",
       "instance_name": "tee-0xc35c1d9555e5883cb0915e02090a097478960734",
@@ -106,7 +106,7 @@ Same body returned from `/v1/chat/completions` against:
 
 ## Steps to reproduce
 
-1. **Deploy any minimal Node service to sepolia on `g1-standard-4t`.**
+1. **Deploy any minimal Node service to the legacy testnet on `g1-standard-4t`.**
 
    - Public registry, `linux/amd64` image, exposes `/healthz` on `0.0.0.0:$PORT`.
    - Do not include `AGENT_PRIVATE_KEY` in the env file — let the platform inject `MNEMONIC` automatically.
@@ -159,9 +159,9 @@ Same body returned from `/v1/chat/completions` against:
 
 ## Diagnostics already performed
 
-- **JWT contents verified.** Decoded header + payload show `iss: eigenx-kms`, `aud: ["llm-proxy"]`, valid `iat`/`exp`, correct `app_id`, valid TDX measurements, and `gce.project_id: tee-compute-sepolia-prod`. The 401 message specifically says signature verification failed (`crypto/rsa: verification error`), not audience/expiry/issuer.
+- **JWT contents verified.** Decoded header + payload show `iss: eigenx-kms`, `aud: ["llm-proxy"]`, valid `iat`/`exp`, correct `app_id`, valid TDX measurements, and `gce.project_id: tee-compute-legacy-prod`. The 401 message specifically says signature verification failed (`crypto/rsa: verification error`), not audience/expiry/issuer.
 - **TPM contention ruled out.** Initial naive use of the SDK created an independent `JwtProvider` per model and produced concurrent attestation calls that raced on `/dev/tpmrm0` (`device or resource busy`). After pre-warming a single JWT at boot and sharing it across all parallel `generateText` calls, the busy errors disappear and every model uniformly receives the same `401` from the gateway. Pre-warm code: <https://github.com/megabyte0x/eigenisedNews/blob/main/src/fanout/llmProxy.ts>.
-- **Gateway URL alternatives probed.** `ai-gateway-sepolia`, `ai-gateway-prod`, `ai-gateway-mainnet`, and `llm-proxy` subdomains under `eigencloud.xyz` did not resolve. Only `ai-gateway-dev` and `ai-gateway` returned HTTP responses, both with the same signature-verification error.
+- **Gateway URL alternatives probed.** `ai-gateway-legacy`, `ai-gateway-prod`, `ai-gateway-mainnet`, and `llm-proxy` subdomains under `eigencloud.xyz` did not resolve. Only `ai-gateway-dev` and `ai-gateway` returned HTTP responses, both with the same signature-verification error.
 - **Container env confirmed.** `KMS_SERVER_URL`, `KMS_PUBLIC_KEY`, and `MNEMONIC` are all injected by the platform and visible to the workload (verified by logging `Object.keys(process.env)` at boot).
 - **Verifiable build does not change the result.** Suspecting that a verifiable-build provenance binding might be required for the gateway to accept the JWT, we re-deployed via the platform's verifiable build pipeline with `--verifiable --repo --commit`. The image was rebuilt by `cloudbuild.googleapis.com/GoogleHostedWorker` (per the build's `provenanceJson`) and pushed to `docker.io/eigenlayer/eigencloud-containers@sha256:4da0373ec058e46159931617863ec4a3bc9a3151e5b9c155bd90c4d0ba65d325`. The JWT issued for this verifiable image carries the platform-built `image_digest` and identical `tdx.mrtd` measurements, but the gateway still rejects with the same `crypto/rsa: verification error`. Build ID: `971a920a-7434-49e3-94db-9105cec1d15a` (`status: success`). Same outcome as the Path A pre-built deploy.
 - **Followed the canonical pattern.** Confirmed that the failing client code matches `github.com/Layr-Labs/ecloud-inference-example` (`@layr-labs/ai-gateway-provider@^1.0.1` + `ai@^6.0.168`, `eigen('anthropic/claude-sonnet-4.6')` via `generateText`, MNEMONIC-derived account, no manual JWT injection in the default code path).
@@ -199,13 +199,13 @@ Same body returned from `/v1/chat/completions` against:
 
 ## Asks
 
-1. **Confirm whether sepolia-prod TEE attestations are expected to be accepted by the public AI Gateway today**, and which gateway URL is canonical for `tee-compute-sepolia-prod` apps.
+1. **Confirm whether those legacy testnet TEE attestations are expected to be accepted by the public AI Gateway today**, and which gateway URL is canonical for `tee-compute-legacy-prod` apps.
 2. **If the KMS↔gateway key sync is the root cause**, please publish the rotated key or a status URL we can poll.
-3. **If sepolia-prod inference requires a separate enrollment step**, document it in the LLM Proxy Quickstart so apps don't deploy and silently 401.
+3. **If that legacy testnet inference path requires a separate enrollment step**, document it in the LLM Proxy Quickstart so apps don't deploy and silently 401.
 
 ## Reference: app and repository
 
-- App dashboard: <https://verify-sepolia.eigencloud.xyz/app/0xc35c1d9555E5883Cb0915E02090A097478960734>
+- App dashboard: <https://verify.eigencloud.xyz/app/0x62B98291bdaab3FE0E12b4693e6D79f391501437>
 - Source: <https://github.com/megabyte0x/eigenisedNews>
 - LLM proxy client: <https://github.com/megabyte0x/eigenisedNews/blob/main/src/fanout/llmProxy.ts>
 - Notes on the assumed/empirical contract: <https://github.com/megabyte0x/eigenisedNews/blob/main/docs/llm-proxy-notes.md>
