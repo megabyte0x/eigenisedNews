@@ -1,4 +1,9 @@
-export function renderFrontendShell(): string {
+export type FrontendRuntimeConfig = {
+  apiBaseUrl?: string;
+};
+
+export function renderFrontendShell(runtimeConfig: FrontendRuntimeConfig = {}): string {
+  const runtimeConfigJson = JSON.stringify(runtimeConfig).replace(/</g, "\\u003c");
   return `<!doctype html>
 <html lang="en">
   <head>
@@ -13,6 +18,7 @@ export function renderFrontendShell(): string {
   </head>
   <body>
     <div id="root"></div>
+    <script type="application/json" id="frontend-runtime-config">${runtimeConfigJson}</script>
     <script type="module" src="/app.js"></script>
   </body>
 </html>`;

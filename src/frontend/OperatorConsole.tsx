@@ -20,6 +20,10 @@ type OperatorConsoleProps = {
   fetchImpl?: FetchLike;
 };
 
+type FrontendRuntimeConfig = {
+  apiBaseUrl?: string;
+};
+
 type Status =
   | { kind: "idle" }
   | { kind: "client_error"; message: string }
@@ -50,7 +54,7 @@ export function OperatorConsole({ fetchImpl = fetch }: OperatorConsoleProps) {
 
     setStatus({ kind: "loading" });
 
-    const path = includeRaw ? "/synthesize?include=raw" : "/synthesize";
+    const path = resolveSynthesizeUrl(includeRaw);
     try {
       const res = await fetchImpl(path, {
         method: "POST",
@@ -93,8 +97,8 @@ export function OperatorConsole({ fetchImpl = fetch }: OperatorConsoleProps) {
             </div>
             <dl className="grid grid-cols-2 gap-3 text-sm">
               <Metric label="endpoint" value="POST /synthesize" />
-              <Metric label="models" value="4 fixed" />
-              <Metric label="threshold" value="3 succeed" />
+              <Metric label="models" value="3 fixed" />
+              <Metric label="threshold" value="2 of 3" />
               <Metric label="output" value="signed manifest" />
             </dl>
           </div>
@@ -303,6 +307,40 @@ function buildRequest(topic: string, urlText: string, sourceUrl: string, sourceT
   };
 }
 
+function resolveSynthesizeUrl(includeRaw: boolean): string {
+  const runtimeConfig = readFrontendRuntimeConfig();
+  const path = includeRaw ? "synthesize?include=raw" : "synthesize";
+
+  if (!runtimeConfig.apiBaseUrl?.trim()) {
+    return `/${path}`;
+  }
+
+  const base = runtimeConfig.apiBaseUrl.trim().replace(/\/+$/, "") + "/";
+
+  try {
+    return new URL(path, base).toString();
+  } catch {
+    return `/${path}`;
+  }
+}
+
+function readFrontendRuntimeConfig(): FrontendRuntimeConfig {
+  if (typeof document === "undefined") {
+    return {};
+  }
+
+  const script = document.getElementById("frontend-runtime-config");
+  if (!script?.textContent) {
+    return {};
+  }
+
+  try {
+    return JSON.parse(script.textContent) as FrontendRuntimeConfig;
+  } catch {
+    return {};
+  }
+}
+
 function isPartialResponse(value: SynthesizeSuccess | ApiError): value is SynthesizeSuccess {
   return "manifest" in value && "signature" in value;
 }
@@ -336,22 +374,19 @@ function Banner({ title, tone, children }: { title: string; tone: "warning" | "d
 }
 
 function StatusBadge({ status }: { status: Status }) {
-  const tone =
-    status.kind === "loading"
-      ? "bg-[#f7b267]/10 text-[#ffd8a1]"
-      : status.kind === "success"
-        ? "bg-[#90f0b5]/10 text-[#baf4ca]"
-        : status.kind === "api_error" || status.kind === "client_error"
-          ? "bg-[#ff7d73]/10 text-[#ffd2cd]"
-          : "bg-white/5 text-[#c9c1af]";
-  const label =
-    status.kind === "loading"
-      ? "running"
-      : status.kind === "success"
-        ? "complete"
-        : status.kind === "api_error" || status.kind === "client_error"
-          ? "attention"
-          : "idle";
+  let tone = "bg-white/5 text-[#c9c1af]";
+  let label = "idle";
+
+  if (status.kind === "loading") {
+    tone = "bg-[#f7b267]/10 text-[#ffd8a1]";
+    label = "running";
+  } else if (status.kind === "success") {
+    tone = "bg-[#90f0b5]/10 text-[#baf4ca]";
+    label = "complete";
+  } else if (status.kind === "api_error" || status.kind === "client_error") {
+    tone = "bg-[#ff7d73]/10 text-[#ffd2cd]";
+    label = "attention";
+  }
   return <span className={`rounded-full px-3 py-1 text-xs uppercase tracking-[0.25em] ${tone}`}>{label}</span>;
 }
 

@@ -2,11 +2,11 @@
 
 Multi-model news synthesis with a verifiable methodology, deployed inside a TEE on EigenCompute.
 
-## What it is
-
-A single-endpoint HTTP service that accepts a topic plus a set of sources (URLs and/or raw text), fans the request out to a fixed set of LLMs through the EigenCloud LLM Proxy, and merges their structured outputs deterministically — no LLM judge — into a consensus brief plus minority perspectives. The agent returns a content-addressed manifest of every input, model call, and merge step, signed by the TEE-derived EVM wallet. Operators cannot silently change the model set, prompts, merge logic, or retry policy without producing a new image digest, recorded on-chain via the EigenCompute verifiable build pipeline.
+A news research service that accepts a single news article URL as its primary flow, asks a main agent to create pro and contra research prompts, then runs two perspective agents over the same fetched article context. The response shows evidence-backed analysis for and against the article's framing. The original multi-model synthesis console is still available as a secondary operator interface: it accepts a topic plus sources, fans the request out to the fixed model set through the EigenCloud LLM Proxy, and returns a signed consensus manifest.
 
 ## Quick start (local)
+
+Use Node 25 for local, CI, and container parity.
 
 ```bash
 npm install
@@ -15,9 +15,43 @@ npm run dev
 curl http://localhost:3000/healthz
 ```
 
+Run the local UI against the current remote API:
+
+```bash
+FRONTEND_API_BASE_URL=http://34.30.150.229:3000 npm run dev
+```
+
+The deployed backend must set `CORS_ALLOW_ORIGINS=http://localhost:3000,http://127.0.0.1:3000` or browser requests from the local UI will be blocked.
+
+When `FRONTEND_API_BASE_URL` is unset, the UI falls back to same-origin `/research` and `/synthesize` endpoints.
+
+## Primary article research API
+
+```bash
+curl http://localhost:3000/research \
+  -H 'content-type: application/json' \
+  -d '{"articleUrl":"https://example.com/news/story"}'
+```
+
+The `/research` endpoint fetches the URL once, has the main agent generate separate pro and contra prompts, then returns both perspective-agent outputs:
+
+```json
+{
+  "article": { "url": "https://example.com/news/story", "contentSha256": "sha256:...", "byteLength": 1234, "error": null },
+  "proPrompt": "...",
+  "contraPrompt": "...",
+  "proAnalysis": "...",
+  "contraAnalysis": "...",
+  "mainSummary": "...",
+  "agentRuns": [{ "role": "main", "provider": "anthropic", "model": "claude-sonnet-4.6", "status": "ok" }]
+}
+```
+
+The synthesis/manifest flow remains available at `POST /synthesize` and in the UI through **Open synthesis console**.
+
 ## Trust model
 
-The trust pivot is the deterministic merger: claims supported by `⌈N/2⌉` or more successful models become consensus claims, the rest become minority claims, and the algorithm itself is code in a verifiable image. Combined with the LLM Proxy (model versions are recorded), the source fetcher (raw bytes are hashed), and a TEE-derived signing key (deterministic per `appId`, persists across upgrades), every byte that influenced the synthesis is mechanically verifiable by an auditor running `scripts/verify-manifest.ts` against a saved response.
+The core trust mechanism is the deterministic merger: claims supported by `⌈N/2⌉` or more successful models become consensus claims, the rest become minority claims, and the algorithm itself is code in a verifiable image. Combined with the LLM Proxy (model versions are recorded), the source fetcher (raw bytes are hashed), and a TEE-derived signing key (deterministic per `appId`, persists across upgrades), every byte that influenced the synthesis is mechanically verifiable by an auditor running `scripts/verify-manifest.ts` against a saved response.
 
 For the full design rationale and locked decisions, see `docs/design.md`.
 

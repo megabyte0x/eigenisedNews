@@ -1,6 +1,6 @@
 import React from "react";
 import { createRoot } from "react-dom/client";
-import { OperatorConsole } from "./OperatorConsole";
+import { NewsResearchApp } from "./NewsResearchApp";
 import "./styles.css";
 
 const container = document.getElementById("root");
@@ -11,6 +11,6 @@ if (!container) {
 
 createRoot(container).render(
   <React.StrictMode>
-    <OperatorConsole />
+    <NewsResearchApp />
   </React.StrictMode>
 );
