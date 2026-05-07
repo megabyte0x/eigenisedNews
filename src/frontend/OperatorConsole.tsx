@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import type { Manifest, RawModelOutput, SynthesizeSource } from "../types";
 
 type FetchLike = typeof fetch;
@@ -31,7 +31,10 @@ type Status =
   | { kind: "api_error"; message: string; partial: SynthesizeSuccess | null }
   | { kind: "success"; response: SynthesizeSuccess };
 
-const SURFACE = "rounded-[28px] border border-white/10 bg-black/35 shadow-[0_20px_80px_rgba(0,0,0,0.45)] backdrop-blur-xl";
+type SubmitEvent = { preventDefault: () => void };
+
+const SURFACE = "surface-card";
+const inputClassName = "form-input";
 
 export function OperatorConsole({ fetchImpl = fetch }: OperatorConsoleProps) {
   const [topic, setTopic] = useState("");
@@ -44,7 +47,7 @@ export function OperatorConsole({ fetchImpl = fetch }: OperatorConsoleProps) {
   const payload = useMemo(() => buildRequest(topic, urlText, sourceUrl, sourceText), [sourceText, sourceUrl, topic, urlText]);
   const response = status.kind === "success" ? status.response : status.kind === "api_error" ? status.partial : null;
 
-  async function onSubmit(event: React.FormEvent<HTMLFormElement>) {
+  async function onSubmit(event: SubmitEvent) {
     event.preventDefault();
     const validation = validateRequest(payload);
     if (validation) {
@@ -82,41 +85,38 @@ export function OperatorConsole({ fetchImpl = fetch }: OperatorConsoleProps) {
   }
 
   return (
-    <div className="min-h-screen bg-[#0b1020] text-[#f3efe3]">
-      <div className="mx-auto flex max-w-7xl flex-col gap-8 px-5 py-8 sm:px-8 lg:px-12">
-        <header className={`${SURFACE} overflow-hidden`}>
-          <div className="grid gap-6 px-6 py-6 sm:px-8 lg:grid-cols-[1.4fr_0.8fr] lg:px-10">
-            <div>
-              <p className="text-xs uppercase tracking-[0.38em] text-[#f7b267]">EigenCompute operator console</p>
-              <h1 className="mt-4 max-w-3xl font-serif text-4xl tracking-tight text-[#fff9ec] sm:text-5xl">
-                eigenisedNews
-              </h1>
-              <p className="mt-4 max-w-2xl text-sm leading-7 text-[#d8d2c2] sm:text-base">
-                Submit a topic, attach URLs or source text, and inspect the signed consensus manifest without reaching for curl.
-              </p>
-            </div>
-            <dl className="grid grid-cols-2 gap-3 text-sm">
-              <Metric label="endpoint" value="POST /synthesize" />
-              <Metric label="models" value="3 fixed" />
-              <Metric label="threshold" value="2 of 3" />
-              <Metric label="output" value="signed manifest" />
-            </dl>
+    <div className="app-shell__inner app-shell__inner--spacious">
+      <header className={`${SURFACE} surface-card--console`}>
+        <div className="surface-card__body surface-card__body--hero hero-grid">
+          <div>
+            <p className="hero-kicker">EigenCompute operator console</p>
+            <h1 className="hero-title">eigenisedNews</h1>
+            <p className="hero-copy">
+              Submit a topic, attach URLs or source text, and inspect the signed consensus manifest without reaching for curl.
+            </p>
           </div>
-        </header>
+          <dl className="metrics-grid">
+            <Metric label="endpoint" value="POST /synthesize" />
+            <Metric label="models" value="3 fixed" />
+            <Metric label="threshold" value="2 of 3" />
+            <Metric label="output" value="signed manifest" />
+          </dl>
+        </div>
+      </header>
 
-        <div className="grid gap-8 lg:grid-cols-[0.95fr_1.05fr]">
-          <section className={`${SURFACE} p-6 sm:p-8`}>
-            <div className="mb-6 flex items-center justify-between gap-4">
-              <div>
-                <h2 className="font-serif text-2xl text-[#fff9ec]">Compose request</h2>
-                <p className="mt-1 text-sm text-[#c8c1af]">Keep inputs precise. Empty rows are ignored before submit.</p>
+      <div className="panel-grid panel-grid--console">
+        <section className={`${SURFACE} section-card`}>
+          <div className="surface-card__body">
+            <div className="section-header section-header--inline">
+              <div className="section-header__content">
+                <p className="section-kicker">Compose</p>
+                <h2 className="section-title">Compose request</h2>
+                <p className="section-description">Keep inputs precise. Empty rows are ignored before submit.</p>
               </div>
-              <span className="rounded-full border border-[#f7b267]/35 px-3 py-1 text-xs uppercase tracking-[0.24em] text-[#f7b267]">
-                v1 console
-              </span>
+              <span className="status-pill status-pill--idle">v1 console</span>
             </div>
 
-            <form className="space-y-6" onSubmit={onSubmit}>
+            <form className="form-stack" onSubmit={onSubmit}>
               <LabeledField label="Topic">
                 <input
                   aria-label="Topic"
@@ -130,14 +130,14 @@ export function OperatorConsole({ fetchImpl = fetch }: OperatorConsoleProps) {
               <LabeledField label="URLs">
                 <textarea
                   aria-label="URLs"
-                  className={`${inputClassName} min-h-28`}
+                  className={`${inputClassName} form-textarea`}
                   value={urlText}
                   onChange={(event) => setUrlText(event.target.value)}
                   placeholder={"One URL per line\nhttps://example.com/report\nhttps://example.com/post"}
                 />
               </LabeledField>
 
-              <div className="grid gap-4 md:grid-cols-[0.7fr_1.3fr]">
+              <div className="source-grid">
                 <LabeledField label="Source URL">
                   <input
                     aria-label="Source URL"
@@ -150,7 +150,7 @@ export function OperatorConsole({ fetchImpl = fetch }: OperatorConsoleProps) {
                 <LabeledField label="Source text">
                   <textarea
                     aria-label="Source text"
-                    className={`${inputClassName} min-h-28`}
+                    className={`${inputClassName} form-textarea`}
                     value={sourceText}
                     onChange={(event) => setSourceText(event.target.value)}
                     placeholder="Paste article text, notes, or transcripts here"
@@ -158,10 +158,11 @@ export function OperatorConsole({ fetchImpl = fetch }: OperatorConsoleProps) {
                 </LabeledField>
               </div>
 
-              <label className="flex items-center gap-3 rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-[#efe7d1]">
+              <label className="checkbox-row">
                 <input
                   aria-label="Include raw model outputs"
                   checked={includeRaw}
+                  className="checkbox-input"
                   onChange={(event) => setIncludeRaw(event.target.checked)}
                   type="checkbox"
                 />
@@ -180,106 +181,117 @@ export function OperatorConsole({ fetchImpl = fetch }: OperatorConsoleProps) {
                 </Banner>
               ) : null}
 
-              <button
-                className="inline-flex w-full items-center justify-center rounded-2xl bg-[#f7b267] px-5 py-3 font-medium text-[#23160a] transition hover:bg-[#ffd199] disabled:cursor-wait disabled:opacity-70"
-                disabled={status.kind === "loading"}
-                type="submit"
-              >
+              {status.kind === "loading" ? (
+                <p aria-live="polite" className="status-copy">
+                  Synthesis is running. Signed output and diagnostics will populate when the request completes.
+                </p>
+              ) : null}
+
+              <button className="button-primary" disabled={status.kind === "loading"} type="submit">
                 {status.kind === "loading" ? "Running synthesis…" : "Run synthesis"}
               </button>
             </form>
-          </section>
+          </div>
+        </section>
 
-          <section className="flex flex-col gap-6">
-            <div className={`${SURFACE} p-6 sm:p-8`}>
-              <div className="mb-4 flex items-center justify-between gap-4">
-                <div>
-                  <h2 className="font-serif text-2xl text-[#fff9ec]">Response</h2>
-                  <p className="mt-1 text-sm text-[#c8c1af]">Signed output, consensus claims, and model status.</p>
+        <section className="console-stack">
+          <div className={`${SURFACE} section-card`}>
+            <div className="surface-card__body">
+              <div className="section-header section-header--inline">
+                <div className="section-header__content">
+                  <p className="section-kicker">Output</p>
+                  <h2 className="section-title">Response</h2>
+                  <p className="section-description">Signed output, consensus claims, and model status.</p>
                 </div>
                 <StatusBadge status={status} />
               </div>
 
               {response ? (
-                <div className="space-y-5">
-                  <section>
-                    <h3 className="text-xs uppercase tracking-[0.25em] text-[#f7b267]">Brief</h3>
-                    <pre className="mt-3 whitespace-pre-wrap rounded-3xl border border-white/10 bg-white/5 p-4 text-sm leading-7 text-[#f3efe3]">
-                      {response.manifest.brief || "(brief unavailable)"}
-                    </pre>
+                <div className="result-stack">
+                  <section className="result-panel result-panel--support">
+                    <h3 className="result-panel__title">Brief</h3>
+                    <p className="result-panel__meta">Signed synthesis summary</p>
+                    <div className="reading-block reading-block--muted">{response.manifest.brief || "(brief unavailable)"}</div>
                   </section>
 
-                  <div className="grid gap-4 xl:grid-cols-2">
+                  <div className="claim-grid">
                     <ClaimList title="Consensus claims" claims={response.manifest.merge.claims.map((claim) => claim.statement)} />
-                    <ClaimList
-                      title="Minority perspectives"
-                      claims={response.manifest.merge.minorityClaims.map((claim) => claim.statement)}
-                    />
+                    <ClaimList title="Minority perspectives" claims={response.manifest.merge.minorityClaims.map((claim) => claim.statement)} />
                   </div>
 
-                  <section>
-                    <h3 className="text-xs uppercase tracking-[0.25em] text-[#f7b267]">Signature</h3>
-                    <code className="mt-3 block overflow-x-auto rounded-2xl border border-white/10 bg-[#0d1426] px-4 py-3 text-xs text-[#d9f7e2]">
-                      {response.signature}
-                    </code>
+                  <section className="result-panel">
+                    <h3 className="result-panel__title">Signature</h3>
+                    <p className="result-panel__meta">Verifier-facing output</p>
+                    <code className="signature-block">{response.signature}</code>
                   </section>
                 </div>
               ) : (
-                <div className="rounded-[24px] border border-dashed border-white/15 bg-white/[0.03] p-8 text-sm leading-7 text-[#bdb5a3]">
-                  No synthesis response yet. Submit a request to inspect the manifest and model consensus.
-                </div>
+                <div className="empty-state">No synthesis response yet. Submit a request to inspect the manifest and model consensus.</div>
               )}
             </div>
+          </div>
 
-            <div className={`${SURFACE} p-6 sm:p-8`}>
-              <h2 className="font-serif text-2xl text-[#fff9ec]">Manifest diagnostics</h2>
+          <div className={`${SURFACE} section-card`}>
+            <div className="surface-card__body">
+              <div className="section-header">
+                <p className="section-kicker">Diagnostics</p>
+                <h2 className="section-title">Manifest diagnostics</h2>
+                <p className="section-description">Manifest metadata, model outcomes, and optional raw payloads stay available without crowding the primary response.</p>
+              </div>
+
               {response ? (
-                <div className="mt-5 space-y-5">
-                  <ul className="grid gap-3 text-sm text-[#efe7d1] sm:grid-cols-2">
-                    <li className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3">
+                <div className="result-stack">
+                  <ul className="diagnostic-grid">
+                    <li className="diagnostic-item">
                       Successful models: <strong>{response.manifest.merge.successfulModels}</strong>
                     </li>
-                    <li className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3">
+                    <li className="diagnostic-item">
                       Threshold: <strong>{response.manifest.merge.consensusThreshold}</strong>
                     </li>
-                    <li className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3">
+                    <li className="diagnostic-item">
                       App ID: <strong>{response.manifest.deployment.appId}</strong>
                     </li>
-                    <li className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3">
+                    <li className="diagnostic-item">
                       Request hash: <strong>{response.manifest.request.requestHash}</strong>
                     </li>
                   </ul>
 
-                  <section>
-                    <h3 className="text-xs uppercase tracking-[0.25em] text-[#f7b267]">Model runs</h3>
-                    <ul className="mt-3 space-y-3">
+                  <section className="result-panel">
+                    <h3 className="result-panel__title">Model runs</h3>
+                    <p className="result-panel__meta">Per-model execution outcome</p>
+                    <ul className="model-run-list">
                       {response.manifest.models.map((model) => (
-                        <li
-                          className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm"
-                          key={`${model.provider}/${model.model}`}
-                        >
-                          <span>{model.provider}/{model.model}</span>
-                          <span className={model.status === "ok" ? "text-[#9af0b2]" : "text-[#ff9f92]"}>{model.status}</span>
+                        <li className="model-run-item" key={`${model.provider}/${model.model}`}>
+                          <span>
+                            {model.provider}/{model.model}
+                          </span>
+                          <span className={model.status === "ok" ? "model-run-status--ok" : "model-run-status--error"}>{model.status}</span>
                         </li>
                       ))}
                     </ul>
                   </section>
 
                   {response.raw ? (
-                    <details className="rounded-3xl border border-white/10 bg-[#0d1426] p-4">
-                      <summary className="cursor-pointer text-sm text-[#f7b267]">Raw model outputs</summary>
-                      <pre className="mt-4 overflow-x-auto whitespace-pre-wrap text-xs leading-6 text-[#dce8ff]">
-                        {JSON.stringify(response.raw, null, 2)}
-                      </pre>
+                    <details className="disclosure">
+                      <summary className="disclosure__summary">
+                        <span className="disclosure__summary-copy">
+                          <span className="section-kicker disclosure__summary-kicker">Trace</span>
+                          <span className="disclosure__title">Raw model outputs</span>
+                        </span>
+                        <span className="disclosure__meta">JSON payload</span>
+                      </summary>
+                      <div className="disclosure__content">
+                        <pre className="code-block">{JSON.stringify(response.raw, null, 2)}</pre>
+                      </div>
                     </details>
                   ) : null}
                 </div>
               ) : (
-                <p className="mt-4 text-sm leading-7 text-[#bdb5a3]">Manifest metadata appears here after a request completes.</p>
+                <div className="empty-state">Manifest metadata appears here after a request completes.</div>
               )}
             </div>
-          </section>
-        </div>
+          </div>
+        </section>
       </div>
     </div>
   );
@@ -347,59 +359,59 @@ function isPartialResponse(value: SynthesizeSuccess | ApiError): value is Synthe
 
 function Metric({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-[24px] border border-white/10 bg-white/5 px-4 py-4">
-      <dt className="text-[11px] uppercase tracking-[0.25em] text-[#a39a83]">{label}</dt>
-      <dd className="mt-2 font-serif text-lg text-[#fff9ec]">{value}</dd>
+    <div className="metric-card">
+      <dt className="metric-label">{label}</dt>
+      <dd className="metric-value">{value}</dd>
     </div>
   );
 }
 
-function LabeledField({ label, children }: { label: string; children: React.ReactNode }) {
+function LabeledField({ label, children }: { label: string; children: ReactNode }) {
   return (
-    <label className="block">
-      <span className="mb-2 block text-xs uppercase tracking-[0.24em] text-[#f7b267]">{label}</span>
+    <label className="field-group">
+      <span className="field-label">{label}</span>
       {children}
     </label>
   );
 }
 
-function Banner({ title, tone, children }: { title: string; tone: "warning" | "danger"; children: React.ReactNode }) {
-  const toneClass = tone === "warning" ? "border-[#f7b267]/35 bg-[#f7b267]/10 text-[#ffe1b7]" : "border-[#ff7d73]/35 bg-[#ff7d73]/10 text-[#ffd1cb]";
+function Banner({ title, tone, children }: { title: string; tone: "warning" | "danger"; children: ReactNode }) {
   return (
-    <div className={`rounded-2xl border px-4 py-3 text-sm ${toneClass}`}>
-      <p className="font-medium">{title}</p>
-      <p className="mt-1">{children}</p>
+    <div aria-live={tone === "danger" ? "assertive" : "polite"} className={`banner ${tone === "warning" ? "banner--warning" : "banner--danger"}`} role="alert">
+      <p className="banner__title">{title}</p>
+      <p className="banner__body">{children}</p>
     </div>
   );
 }
 
 function StatusBadge({ status }: { status: Status }) {
-  let tone = "bg-white/5 text-[#c9c1af]";
+  let tone = "status-pill--idle";
   let label = "idle";
 
   if (status.kind === "loading") {
-    tone = "bg-[#f7b267]/10 text-[#ffd8a1]";
+    tone = "status-pill--loading";
     label = "running";
   } else if (status.kind === "success") {
-    tone = "bg-[#90f0b5]/10 text-[#baf4ca]";
+    tone = "status-pill--success";
     label = "complete";
   } else if (status.kind === "api_error" || status.kind === "client_error") {
-    tone = "bg-[#ff7d73]/10 text-[#ffd2cd]";
+    tone = "status-pill--attention";
     label = "attention";
   }
-  return <span className={`rounded-full px-3 py-1 text-xs uppercase tracking-[0.25em] ${tone}`}>{label}</span>;
+  return <span className={`status-pill ${tone}`}>{label}</span>;
 }
 
 function ClaimList({ title, claims }: { title: string; claims: string[] }) {
   return (
-    <section>
-      <h3 className="text-xs uppercase tracking-[0.25em] text-[#f7b267]">{title}</h3>
-      <ul className="mt-3 space-y-3">
+    <section className="result-panel">
+      <h3 className="result-panel__title">{title}</h3>
+      <p className="result-panel__meta">Claim set</p>
+      <ul className="claim-list">
         {claims.length === 0 ? (
-          <li className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-[#bdb5a3]">(none)</li>
+          <li className="claim-item claim-item--empty">(none)</li>
         ) : (
-          claims.map((claim) => (
-            <li className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm leading-7 text-[#efe7d1]" key={claim}>
+          claims.map((claim, index) => (
+            <li className="claim-item" key={`${title}-${index}`}>
               {claim}
             </li>
           ))
@@ -408,6 +420,3 @@ function ClaimList({ title, claims }: { title: string; claims: string[] }) {
     </section>
   );
 }
-
-const inputClassName =
-  "w-full rounded-[22px] border border-white/10 bg-white/5 px-4 py-3 text-sm text-[#fff9ec] outline-none transition placeholder:text-[#827866] focus:border-[#f7b267]/60 focus:bg-white/[0.07]";
