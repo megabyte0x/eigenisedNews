@@ -10,7 +10,7 @@
     "typecheck": "tsc --noEmit",
     "build:frontend": "node scripts/build-frontend.mjs dist/public",
     "dev:frontend": "node scripts/build-frontend.mjs public --watch",
-    "build": "npm run build:frontend && esbuild src/index.ts --bundle --platform=node --target=node22 --format=cjs --outfile=dist/bundle.cjs",
+    "build": "npm run build:frontend && esbuild src/index.ts --bundle --platform=node --target=node25 --format=cjs --outfile=dist/bundle.cjs",
     "start": "node dist/bundle.cjs",
     "dev": "sh -c 'npm run dev:frontend & tsx watch src/index.ts'",
     "e2e:live": "node scripts/live-e2e.mjs",
