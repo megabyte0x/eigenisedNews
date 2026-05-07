@@ -86,9 +86,20 @@ export function NewsResearchApp({ fetchImpl = fetch }: NewsResearchAppProps) {
             </div>
             <div className="hero-actions">
               <div className="stack-md">
-                <button className="button-ghost" onClick={() => setMode("console")} type="button">
-                  Open synthesis console
-                </button>
+                <div className="hero-actions__row">
+                  <button className="button-ghost" onClick={() => setMode("console")} type="button">
+                    Open synthesis console
+                  </button>
+                  <a
+                    aria-label="Open the EigenCloud app dashboard in a new tab"
+                    className="hero-action-link"
+                    href="https://verify.eigencloud.xyz/app/0x62B98291bdaab3FE0E12b4693e6D79f391501437"
+                    rel="noopener noreferrer"
+                    target="_blank"
+                  >
+                    View app dashboard
+                  </a>
+                </div>
                 <p className="hero-note">
                   Reader-first output up front, with prompts and agent runs preserved below for inspection.
                 </p>
