@@ -76,6 +76,38 @@ export type SynthesizeResponse = {
   raw: RawModelOutput[] | null;
 };
 
+export type NewsResearchRequest = {
+  articleUrl: string;
+};
+
+export type NewsResearchAgentRole = "main" | "pro" | "contra";
+
+export type NewsResearchAgentRun = {
+  role: NewsResearchAgentRole;
+  provider: string;
+  model: string;
+  status: ModelRunStatus;
+  promptHash: Sha256;
+  rawOutputSha256: Sha256 | null;
+  error: string | null;
+};
+
+export type NewsResearchResponse = {
+  article: {
+    url: string;
+    contentSha256: Sha256 | null;
+    fetchedAt?: string;
+    byteLength: number;
+    error: string | null;
+  };
+  proPrompt: string;
+  contraPrompt: string;
+  proAnalysis: string;
+  contraAnalysis: string;
+  mainSummary: string;
+  agentRuns: NewsResearchAgentRun[];
+};
+
 export type StructuredModelOutput = {
   claims: StructuredClaim[];
   summary: string;

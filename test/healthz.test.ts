@@ -3,7 +3,7 @@ import request from "supertest";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { buildApp } from "../src/index";
+import { buildApp, readDeploymentEnvironment } from "../src/index";
 import { loadDotEnvFile } from "../src/lib/env";
 
 describe("GET /healthz", () => {
@@ -31,6 +31,19 @@ describe("GET /healthz", () => {
       restoreEnv("AGENT_PRIVATE_KEY", originalPrivateKey);
       restoreEnv("EIGEN_ENVIRONMENT", originalEigenEnvironment);
     }
+  });
+
+  test("explicit mainnet-alpha wins", () => {
+    expect(readDeploymentEnvironment("mainnet-alpha")).toBe("mainnet-alpha");
+  });
+
+  test("explicit sepolia wins", () => {
+    expect(readDeploymentEnvironment("sepolia")).toBe("sepolia");
+  });
+
+  test("local fallback stays local when no explicit env is present", () => {
+    expect(readDeploymentEnvironment(undefined)).toBe("local");
+    expect(readDeploymentEnvironment("   ")).toBe("local");
   });
 
   test("loads AGENT_PRIVATE_KEY from a local .env file without overriding explicit env", () => {

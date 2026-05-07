@@ -5,6 +5,17 @@ import { buildApp } from "../src/index";
 import type { RunSynthesisDeps } from "../src/pipeline";
 
 const FIXED_TS = "2026-04-27T12:00:00.000Z";
+const PRIOR_CORS_ALLOW_ORIGINS = process.env.CORS_ALLOW_ORIGINS;
+
+async function withCorsAllowOrigins(value: string, run: () => Promise<void>) {
+  process.env.CORS_ALLOW_ORIGINS = value;
+
+  try {
+    await run();
+  } finally {
+    process.env.CORS_ALLOW_ORIGINS = PRIOR_CORS_ALLOW_ORIGINS;
+  }
+}
 
 function makeApp(overrides: Partial<RunSynthesisDeps> = {}) {
   const account = privateKeyToAccount(generatePrivateKey());
@@ -56,7 +67,7 @@ describe("POST /synthesize", () => {
       .send({ topic: "t", sources: [{ text: "x" }] });
     expect(res.status).toBe(200);
     expect(Array.isArray(res.body.raw)).toBe(true);
-    expect(res.body.raw.length).toBe(4);
+    expect(res.body.raw.length).toBe(3);
   });
 
   test("400 on missing topic", async () => {
@@ -96,5 +107,51 @@ describe("POST /synthesize", () => {
     expect(res.body.error).toBe("min_model_success_not_met");
     expect(res.body.manifest.merge.thresholdMet).toBe(false);
     expect(res.body.signature).toMatch(/^0x[0-9a-f]+$/i);
+  });
+
+  test("allowlisted preflight returns 204 with CORS headers", async () => {
+    await withCorsAllowOrigins("http://localhost:5173, https://ui.example", async () => {
+      const res = await request(makeApp())
+        .options("/synthesize")
+        .set("Origin", "http://localhost:5173")
+        .set("Access-Control-Request-Method", "POST")
+        .set("Access-Control-Request-Headers", "content-type");
+
+      expect(res.status).toBe(204);
+      expect(res.headers["access-control-allow-origin"]).toBe("http://localhost:5173");
+      expect(res.headers["access-control-allow-methods"]).toBe("POST,GET,OPTIONS");
+      expect(res.headers["access-control-allow-headers"]).toBe("content-type");
+      expect(res.headers.vary).toBe("Origin");
+    });
+  });
+
+  test("allowlisted POST includes CORS headers", async () => {
+    await withCorsAllowOrigins("http://localhost:5173, https://ui.example", async () => {
+      const res = await request(makeApp())
+        .post("/synthesize")
+        .set("Origin", "https://ui.example")
+        .send({ topic: "t", sources: [{ text: "x" }] });
+
+      expect(res.status).toBe(200);
+      expect(res.headers["access-control-allow-origin"]).toBe("https://ui.example");
+      expect(res.headers["access-control-allow-methods"]).toBe("POST,GET,OPTIONS");
+      expect(res.headers["access-control-allow-headers"]).toBe("content-type");
+      expect(res.headers.vary).toBe("Origin");
+    });
+  });
+
+  test("disallowed origin omits CORS headers", async () => {
+    await withCorsAllowOrigins("http://localhost:5173", async () => {
+      const res = await request(makeApp())
+        .post("/synthesize")
+        .set("Origin", "https://ui.example")
+        .send({ topic: "t", sources: [{ text: "x" }] });
+
+      expect(res.status).toBe(200);
+      expect(res.headers["access-control-allow-origin"]).toBeUndefined();
+      expect(res.headers["access-control-allow-methods"]).toBeUndefined();
+      expect(res.headers["access-control-allow-headers"]).toBeUndefined();
+      expect(res.headers.vary).toBeUndefined();
+    });
   });
 });

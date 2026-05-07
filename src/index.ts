@@ -4,11 +4,12 @@ import { hostname } from "node:os";
 import { join } from "node:path";
 import { mnemonicToAccount, privateKeyToAccount } from "viem/accounts";
 import { fetchUrl } from "./fetchers/sourceFetcher";
-import { callModel } from "./fanout/llmProxy";
+import { callModel, type CallErrorDebugInfo } from "./fanout/llmProxy";
 import { renderFrontendShell } from "./frontend/shell";
+import { makeResearchHandler } from "./http/research";
 import { makeSynthesizeHandler } from "./http/synthesize";
 import type { ManifestSigner } from "./manifest/sign";
-import type { RunSynthesisDeps } from "./pipeline";
+import type { RunSynthesisDeps, StructuredOutputDebugInfo } from "./pipeline";
 import type { Manifest } from "./types";
 import { loadDotEnvFile } from "./lib/env";
 import { isUnknownRecord } from "./lib/guards";
@@ -17,7 +18,7 @@ import { log } from "./lib/log";
 loadDotEnvFile();
 
 function readDeployment(fallbackAddress: `0x${string}`): Manifest["deployment"] {
-  const env = readDeploymentEnvironment(process.env.EIGEN_ENVIRONMENT ?? (process.env.MNEMONIC ? "sepolia" : "local"));
+  const env = readDeploymentEnvironment(process.env.EIGEN_ENVIRONMENT);
   const h = hostname();
   const appIdFromHost = h.startsWith("tee-0x") ? h.slice(4) : null;
   return {
@@ -29,8 +30,10 @@ function readDeployment(fallbackAddress: `0x${string}`): Manifest["deployment"] 
   };
 }
 
-function readDeploymentEnvironment(value: string): Manifest["deployment"]["environment"] {
-  if (value === "sepolia" || value === "mainnet-alpha" || value === "local") return value;
+export function readDeploymentEnvironment(value: string | undefined): Manifest["deployment"]["environment"] {
+  const normalized = value?.trim();
+  if (!normalized) return "local";
+  if (normalized === "sepolia" || normalized === "mainnet-alpha" || normalized === "local") return normalized;
   throw new Error(`EIGEN_ENVIRONMENT invalid: ${value}`);
 }
 
@@ -55,11 +58,41 @@ function buildProductionDeps(): RunSynthesisDeps {
   log("info", "boot", { agent: address, appId: deployment.appId, env: deployment.environment });
   return {
     fetchUrl,
-    callModel: ({ provider, model, prompt }) => callModel({ provider, model, prompt }),
+    callModel: ({ provider, model, prompt }) => callModel({ provider, model, prompt, onDebugInfo: logCallErrorDebugInfo }),
+    onStructuredOutputDebugInfo: logStructuredOutputDebugInfo,
     now: () => new Date().toISOString(),
     deployment,
     sign,
   };
+}
+
+function logCallErrorDebugInfo(info: CallErrorDebugInfo): void {
+  log("error", "llm_call_debug", info);
+}
+
+function logStructuredOutputDebugInfo(info: StructuredOutputDebugInfo): void {
+  log("error", "llm_parse_debug", info);
+}
+
+function readFrontendRuntimeConfig(): { apiBaseUrl?: string } {
+  const apiBaseUrl = process.env.FRONTEND_API_BASE_URL?.trim();
+  return apiBaseUrl ? { apiBaseUrl } : {};
+}
+
+function readCorsAllowOrigins(): string[] {
+  const raw = process.env.CORS_ALLOW_ORIGINS;
+  if (!raw) return [];
+  return raw
+    .split(",")
+    .map((origin) => origin.trim())
+    .filter((origin) => origin.length > 0);
+}
+
+function setCorsHeaders(res: express.Response, origin: string): void {
+  res.setHeader("Access-Control-Allow-Origin", origin);
+  res.setHeader("Access-Control-Allow-Methods", "POST,GET,OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "content-type");
+  res.setHeader("Vary", "Origin");
 }
 
 function assertRunSynthesisDeps(d: unknown): asserts d is RunSynthesisDeps {
@@ -78,6 +111,20 @@ function assertRunSynthesisDeps(d: unknown): asserts d is RunSynthesisDeps {
 
 export function buildApp(depsOverride?: RunSynthesisDeps): Express {
   const app = express();
+  app.use((req, res, next) => {
+    const requestOrigin = req.get("origin");
+    if (!requestOrigin) return next();
+
+    const allowedOrigins = readCorsAllowOrigins();
+    if (!allowedOrigins.includes(requestOrigin)) return next();
+
+    setCorsHeaders(res, requestOrigin);
+    if (req.method === "OPTIONS" && (req.path === "/synthesize" || req.path === "/research")) {
+      return res.status(204).end();
+    }
+
+    return next();
+  });
   app.use(express.json({ limit: "4mb" }));
   const staticDir = resolveStaticDir();
   if (staticDir) {
@@ -87,14 +134,17 @@ export function buildApp(depsOverride?: RunSynthesisDeps): Express {
     res.json({ ok: true });
   });
   app.get("/", (_req, res) => {
-    res.type("html").send(renderFrontendShell());
+    res.type("html").send(renderFrontendShell(readFrontendRuntimeConfig()));
   });
 
   if (depsOverride !== undefined) {
     assertRunSynthesisDeps(depsOverride);
+    app.post("/research", makeResearchHandler(depsOverride));
     app.post("/synthesize", makeSynthesizeHandler(depsOverride));
   } else if (process.env.NODE_ENV !== "test") {
-    app.post("/synthesize", makeSynthesizeHandler(buildProductionDeps()));
+    const productionDeps = buildProductionDeps();
+    app.post("/research", makeResearchHandler(productionDeps));
+    app.post("/synthesize", makeSynthesizeHandler(productionDeps));
   }
   return app;
 }

@@ -5,6 +5,9 @@ runtime:
   vcpu: 4
   memoryMiB: 8192
 endpoints:
+  - name: research
+    method: POST
+    path: /research
   - name: synthesize
     method: POST
     path: /synthesize
