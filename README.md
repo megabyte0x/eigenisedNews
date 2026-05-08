@@ -32,6 +32,8 @@ curl http://localhost:3000/research \
 
 The response includes article metadata, the pro/contra prompts derived from the article, both analyses, and agent run diagnostics.
 
+When `FIRECRAWL_API_KEY` is configured, article fetching uses Firecrawl `/v2/scrape` first for clean markdown content. If Firecrawl is unavailable or returns no usable content, the fetcher falls back to the existing bounded direct HTTP request. Without `FIRECRAWL_API_KEY`, direct HTTP remains the only fetch path.
+
 ### 2. Signed synthesis (`POST /synthesize`)
 
 This is the secondary operator-facing flow. It accepts a topic plus URLs and/or pasted source text, runs the fixed model set, merges claims deterministically, and signs the resulting manifest.
@@ -51,6 +53,8 @@ curl http://localhost:3000/healthz
 ```
 
 For local signing, set `AGENT_PRIVATE_KEY` in `.env`. In EigenCompute, the app can derive its runtime signer from the platform-injected `MNEMONIC` instead.
+
+To enable Firecrawl as the primary article-access fetcher, set `FIRECRAWL_API_KEY` in `.env` or the deployment environment. `FIRECRAWL_API_URL` is optional and defaults to the hosted Firecrawl API.
 
 ## Frontend to remote backend
 

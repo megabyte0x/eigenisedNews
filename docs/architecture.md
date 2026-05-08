@@ -86,7 +86,10 @@ The article research path lives in `runArticleResearch` inside `src/pipeline.ts`
 ### Flow
 
 1. Validate the article URL.
-2. Fetch the article once.
+2. Fetch the article once:
+   - Firecrawl `/v2/scrape` markdown first when `FIRECRAWL_API_KEY` is configured
+   - bounded direct HTTP fallback if Firecrawl is unavailable or returns no usable content
+   - direct HTTP only when Firecrawl is not configured
 3. Record hashed article metadata.
 4. Prepare article context:
    - convert HTML to text when applicable

@@ -6,6 +6,7 @@ import { fetchUrl, hashText } from "../src/fetchers/sourceFetcher";
 let server: http.Server;
 let baseUrl: string;
 let flakyHits = 0;
+let firecrawlRequests: unknown[] = [];
 
 beforeAll(async () => {
   server = http.createServer((req, res) => {
@@ -40,6 +41,40 @@ beforeAll(async () => {
       if (flakyHits === 1) { res.writeHead(500); res.end("err"); return; }
       res.writeHead(200, { "content-type": "text/plain" });
       res.end("ok-on-retry");
+      return;
+    }
+    if (url.pathname === "/firecrawl-fails") {
+      res.writeHead(200, { "content-type": "text/plain" });
+      res.end("direct fallback text");
+      return;
+    }
+    if (url.pathname === "/blocked-article") {
+      res.writeHead(403, { "content-type": "text/plain" });
+      res.end("blocked");
+      return;
+    }
+    if (url.pathname === "/v2/scrape") {
+      let body = "";
+      req.setEncoding("utf8");
+      req.on("data", (chunk) => { body += chunk; });
+      req.on("end", () => {
+        const parsed = JSON.parse(body) as unknown;
+        firecrawlRequests.push(parsed);
+        const requestedUrl = extractRequestUrl(parsed);
+        if (requestedUrl.endsWith("/firecrawl-fails")) {
+          res.writeHead(502, { "content-type": "application/json" });
+          res.end(JSON.stringify({ success: false, error: "upstream unavailable" }));
+          return;
+        }
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({
+          success: true,
+          data: {
+            markdown: "# Firecrawl article\n\nRecovered article text.",
+            metadata: { sourceURL: `${baseUrl}/blocked-article`, statusCode: 200 },
+          },
+        }));
+      });
       return;
     }
     res.writeHead(404);
@@ -100,6 +135,55 @@ describe("fetchUrl", () => {
     const r = await fetchUrl("http://127.0.0.1:1/never", { retries: 0, timeoutMs: 500 });
     expect(r.error === "network_error" || r.error === "timeout").toBe(true);
   });
+
+  test("uses Firecrawl as the primary fetcher when configured", async () => {
+    const previousKey = process.env.FIRECRAWL_API_KEY;
+    const previousUrl = process.env.FIRECRAWL_API_URL;
+    process.env.FIRECRAWL_API_KEY = "fc-test";
+    process.env.FIRECRAWL_API_URL = baseUrl;
+    firecrawlRequests = [];
+    try {
+      const r = await fetchUrl(`${baseUrl}/ok`, { retries: 0 });
+      expect(r.error).toBeNull();
+      expect(r.text).toBe("# Firecrawl article\n\nRecovered article text.");
+      expect(r.byteLength).toBe(Buffer.byteLength(r.text, "utf8"));
+      expect(r.contentSha256).toMatch(/^sha256:[0-9a-f]{64}$/);
+      expect(firecrawlRequests).toHaveLength(1);
+      expect(firecrawlRequests[0]).toMatchObject({
+        url: `${baseUrl}/ok`,
+        formats: ["markdown"],
+        onlyMainContent: true,
+        proxy: "auto",
+      });
+    } finally {
+      restoreEnv("FIRECRAWL_API_KEY", previousKey);
+      restoreEnv("FIRECRAWL_API_URL", previousUrl);
+    }
+  });
+
+  test("falls back to direct fetching when Firecrawl fails", async () => {
+    const previousKey = process.env.FIRECRAWL_API_KEY;
+    const previousUrl = process.env.FIRECRAWL_API_URL;
+    process.env.FIRECRAWL_API_KEY = "fc-test";
+    process.env.FIRECRAWL_API_URL = baseUrl;
+    firecrawlRequests = [];
+    try {
+      const r = await fetchUrl(`${baseUrl}/firecrawl-fails`, { retries: 0 });
+      expect(r.error).toBeNull();
+      expect(r.text).toBe("direct fallback text");
+      expect(r.byteLength).toBe(Buffer.byteLength(r.text, "utf8"));
+      expect(firecrawlRequests).toHaveLength(1);
+      expect(firecrawlRequests[0]).toMatchObject({
+        url: `${baseUrl}/firecrawl-fails`,
+        formats: ["markdown"],
+        onlyMainContent: true,
+        proxy: "auto",
+      });
+    } finally {
+      restoreEnv("FIRECRAWL_API_KEY", previousKey);
+      restoreEnv("FIRECRAWL_API_URL", previousUrl);
+    }
+  });
 });
 
 describe("hashText", () => {
@@ -116,3 +200,14 @@ describe("hashText", () => {
     expect(r.byteLength).toBe(6); // 'h' + 'é'(2 bytes) + 'l' + 'l' + 'o'
   });
 });
+
+function restoreEnv(key: "FIRECRAWL_API_KEY" | "FIRECRAWL_API_URL", value: string | undefined): void {
+  if (value === undefined) delete process.env[key];
+  else process.env[key] = value;
+}
+
+function extractRequestUrl(value: unknown): string {
+  if (!value || typeof value !== "object" || !("url" in value)) return "";
+  const url = (value as { url?: unknown }).url;
+  return typeof url === "string" ? url : "";
+}

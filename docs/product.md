@@ -38,6 +38,8 @@ Most article-analysis tools either summarize one article or compare multiple sou
 
 The `/research` pipeline fetches one article URL once and then reuses that same prepared context for the planner, pro, and contra stages.
 
+Article access is resilient to publisher-blocking failures: when `FIRECRAWL_API_KEY` is configured, the fetcher tries Firecrawl `/v2/scrape` first for clean article markdown, then falls back to bounded direct HTTP if Firecrawl is unavailable or returns no usable content. Without a Firecrawl key, the pipeline uses direct HTTP only.
+
 ### Reader-first preprocessing
 
 Before the model prompts are built, the article content is normalized into research context:

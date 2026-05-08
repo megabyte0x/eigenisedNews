@@ -20,6 +20,7 @@
   },
   "dependencies": {
     "@layr-labs/ai-gateway-provider": "^1.0.1",
+    "@mendable/firecrawl-js": "^4.22.2",
     "ai": "^6.0.168",
     "express": "^5.2.1",
     "viem": "^2.48.4"
