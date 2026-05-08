@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { OperatorConsole } from "./OperatorConsole";
 import type { NewsResearchResponse } from "../types";
 
@@ -30,6 +30,8 @@ type ResearchApiError = {
 
 type FormattedBlock =
   | { kind: "paragraph"; text: string }
+  | { kind: "heading"; text: string }
+  | { kind: "divider" }
   | { kind: "list"; items: string[] };
 
 const SURFACE = "surface-card";
@@ -435,11 +437,17 @@ function ReadingBlock({ text, muted = false }: { text: string; muted?: boolean }
         if (block.kind === "list") {
           return (
             <ul className="reading-block__list" key={`list-${index}`}>
-              {block.items.map((item, itemIndex) => <li key={`${index}-${itemIndex}`}>{item}</li>)}
+              {block.items.map((item, itemIndex) => <li key={`${index}-${itemIndex}`}>{renderInlineMarkdown(item)}</li>)}
             </ul>
           );
         }
-        return <p className="reading-block__paragraph" key={`p-${index}`}>{block.text}</p>;
+        if (block.kind === "heading") {
+          return <h4 className="reading-block__heading" key={`h-${index}`}>{renderInlineMarkdown(block.text)}</h4>;
+        }
+        if (block.kind === "divider") {
+          return <hr className="reading-block__divider" key={`hr-${index}`} />;
+        }
+        return <p className="reading-block__paragraph" key={`p-${index}`}>{renderInlineMarkdown(block.text)}</p>;
       })}
     </div>
   );
@@ -529,6 +537,25 @@ function formatReadingBlocks(text: string): FormattedBlock[] {
   let pendingList: string[] = [];
 
   for (const line of lines) {
+    const heading = line.match(/^(#{1,6})\s+(.+)$/);
+    if (heading) {
+      if (pendingList.length > 0) {
+        blocks.push({ kind: "list", items: pendingList });
+        pendingList = [];
+      }
+      blocks.push({ kind: "heading", text: heading[2].trim() });
+      continue;
+    }
+
+    if (/^(?:-{3,}|\*{3,}|_{3,})$/.test(line)) {
+      if (pendingList.length > 0) {
+        blocks.push({ kind: "list", items: pendingList });
+        pendingList = [];
+      }
+      blocks.push({ kind: "divider" });
+      continue;
+    }
+
     const bullet = line.match(/^(?:[-*•]|\d+[.)])\s+(.+)$/);
     if (bullet) {
       pendingList.push(bullet[1].trim());
@@ -544,6 +571,31 @@ function formatReadingBlocks(text: string): FormattedBlock[] {
   if (pendingList.length > 0) blocks.push({ kind: "list", items: pendingList });
   if (blocks.length === 0 && text.trim().length > 0) return [{ kind: "paragraph", text: text.trim() }];
   return blocks;
+}
+
+function renderInlineMarkdown(text: string): ReactNode[] {
+  const nodes: ReactNode[] = [];
+  const inlinePattern = /(\*\*[^*\n]+?\*\*|__[^_\n]+?__|`[^`\n]+?`|\*[^*\n]+?\*|_[^_\n]+?_)/g;
+  let cursor = 0;
+  let match: RegExpExecArray | null;
+
+  while ((match = inlinePattern.exec(text)) !== null) {
+    if (match.index > cursor) nodes.push(text.slice(cursor, match.index));
+
+    const token = match[0];
+    const key = `${match.index}-${token}`;
+    if ((token.startsWith("**") && token.endsWith("**")) || (token.startsWith("__") && token.endsWith("__"))) {
+      nodes.push(<strong key={key}>{token.slice(2, -2)}</strong>);
+    } else if (token.startsWith("`") && token.endsWith("`")) {
+      nodes.push(<code key={key}>{token.slice(1, -1)}</code>);
+    } else {
+      nodes.push(<em key={key}>{token.slice(1, -1)}</em>);
+    }
+    cursor = match.index + token.length;
+  }
+
+  if (cursor < text.length) nodes.push(text.slice(cursor));
+  return nodes.length > 0 ? nodes : [text];
 }
 
 function shortHash(value: string): string {

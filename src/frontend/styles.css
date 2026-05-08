@@ -698,17 +698,68 @@ body::after {
   line-height: 1.95;
 }
 
+.reading-block strong {
+  color: #fff1d8;
+  font-weight: 760;
+}
+
+.result-panel--challenge .reading-block strong {
+  color: #ffd3ce;
+}
+
+.reading-block em {
+  color: var(--color-text-secondary);
+  font-style: italic;
+}
+
+.reading-block code {
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 0.4rem;
+  background: rgba(255, 255, 255, 0.06);
+  padding: 0.08rem 0.32rem;
+  color: var(--color-text);
+  font-family: var(--font-mono);
+  font-size: 0.88em;
+}
+
 .reading-block--muted {
   color: var(--color-text-secondary);
+}
+
+.reading-block__heading {
+  margin: 1rem 0 0.45rem;
+  color: var(--color-accent-strong);
+  font-size: 0.86rem;
+  letter-spacing: 0.08em;
+  line-height: 1.35;
+}
+
+.result-panel--challenge .reading-block__heading {
+  color: #ffc5bd;
 }
 
 .reading-block__paragraph {
   margin: 0;
 }
 
+.reading-block__divider {
+  border: 0;
+  height: 1px;
+  margin: 1.05rem 0;
+  background: linear-gradient(90deg, rgba(247, 178, 103, 0.45), transparent);
+}
+
+.result-panel--challenge .reading-block__divider {
+  background: linear-gradient(90deg, rgba(255, 129, 119, 0.42), transparent);
+}
+
 .reading-block__paragraph + .reading-block__paragraph,
 .reading-block__paragraph + .reading-block__list,
-.reading-block__list + .reading-block__paragraph {
+.reading-block__paragraph + .reading-block__heading,
+.reading-block__list + .reading-block__paragraph,
+.reading-block__list + .reading-block__heading,
+.reading-block__heading + .reading-block__paragraph,
+.reading-block__heading + .reading-block__list {
   margin-top: 0.75rem;
 }
 

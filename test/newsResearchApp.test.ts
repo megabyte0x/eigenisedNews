@@ -132,6 +132,47 @@ describe("NewsResearchApp", () => {
     expect(screen.getByText(/retryable/i)).toBeInTheDocument();
   });
 
+  test("renders markdown emphasis in research output instead of raw markers", async () => {
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          article: { url: "https://news.example/story", contentSha256: "sha256:article", fetchedAt: "2026-05-07T00:00:00.000Z", byteLength: 1200, error: null },
+          proPrompt: "Support the article.",
+          contraPrompt: "Challenge the article.",
+          proAnalysis: "## Supporting Evidence\n\n- **Price spike confirmed:** Brent rose **3%**.\n\n---\n\n**Verdict:** Material disruption.",
+          contraAnalysis: "- **Negotiations are ongoing:** Talks complicate the framing.",
+          mainSummary: "",
+          promptBindings: [],
+          verifiableBuild: {
+            appId: "0xapp",
+            agentAddress: "0xagent",
+            imageDigest: "sha256:image",
+            commitSha: "abc123",
+            environment: "mainnet-alpha",
+            promptSourcePath: "src/pipeline.ts",
+          },
+          agentRuns: [],
+        }),
+        { status: 200, headers: { "content-type": "application/json" } }
+      )
+    );
+
+    const { container } = render(React.createElement(NewsResearchApp, { fetchImpl }));
+
+    fireEvent.change(screen.getByLabelText(/news article url/i), { target: { value: "https://news.example/story" } });
+    fireEvent.click(screen.getByRole("button", { name: /research both sides/i }));
+
+    expect(await screen.findByRole("heading", { name: /supporting evidence/i })).toBeInTheDocument();
+    const strongLabels = Array.from(container.querySelectorAll(".reading-block strong")).map((node) => node.textContent);
+    expect(strongLabels).toContain("Price spike confirmed:");
+    expect(strongLabels).toContain("3%");
+    expect(strongLabels).toContain("Verdict:");
+    expect(strongLabels).toContain("Negotiations are ongoing:");
+    expect(container.querySelector(".reading-block__divider")).toBeInTheDocument();
+    expect(container.textContent).not.toContain("**Price spike confirmed:**");
+    expect(container.textContent).not.toContain("## Supporting Evidence");
+  });
+
   test("keeps the synthesis console available", () => {
     render(React.createElement(NewsResearchApp, { fetchImpl: vi.fn<typeof fetch>() }));
 
