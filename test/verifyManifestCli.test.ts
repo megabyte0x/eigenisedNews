@@ -3,7 +3,7 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
-import { makeGoodResponse } from "./helpers/verifierFixture";
+import { makeGoodResearchResponse, makeGoodResponse } from "./helpers/verifierFixture";
 
 describe("verify-manifest CLI", () => {
   test("offline mode exits 0 for valid response with skipped online checks", async () => {
@@ -13,6 +13,18 @@ describe("verify-manifest CLI", () => {
 
     const r = spawnSync("npx", ["tsx", "scripts/verify-manifest.ts", responsePath], { encoding: "utf8" });
     expect(r.status).toBe(0);
+    expect(r.stdout).toContain("ALL RUNNABLE CHECKS PASSED");
+  });
+
+  test("offline mode exits 0 for valid research response", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "verify-cli-"));
+    const responsePath = join(dir, "research-response.json");
+    writeFileSync(responsePath, JSON.stringify(await makeGoodResearchResponse()));
+
+    const r = spawnSync("npx", ["tsx", "scripts/verify-manifest.ts", responsePath], { encoding: "utf8" });
+    expect(r.status).toBe(0);
+    expect(r.stdout).toContain("research_outputs");
+    expect(r.stdout).toContain("research_raw");
     expect(r.stdout).toContain("ALL RUNNABLE CHECKS PASSED");
   });
 

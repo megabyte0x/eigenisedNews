@@ -1,6 +1,6 @@
 # Manifest Verifier
 
-`scripts/verify-manifest.ts` independently checks a saved `/synthesize` response. Save responses with `?include=raw` when you want deterministic merge replay to be fully verifiable.
+`scripts/verify-manifest.ts` independently checks saved `/synthesize` and `/research` responses. Save responses with `?include=raw` when you want deterministic replay/raw-output checks to be fully verifiable.
 
 ## Modes
 
@@ -26,6 +26,8 @@ Strict mode is intended for audit packages that include raw model outputs and pr
 | `manifest_hash` | Yes | Recomputes the manifest hash with `manifestSha256: "sha256:"` as the placeholder and compares it to the claimed hash. |
 | `signature` | Yes | Recovers the EVM signer over `manifestSha256` and compares it to `manifest.deployment.agentAddress`. |
 | `raw_outputs` | Yes, if `raw` is present | Verifies one raw output per successful model, no unexpected outputs, raw hashes match `ModelRun.rawOutputSha256`, and parsed claim counts match the manifest. |
+| `research_outputs` | Yes | For `/research`, verifies response article/prompt/run fields, output hashes, and deterministic `mainSummary` against the signed research manifest. |
+| `research_raw` | Yes, if `raw` is present | For `/research`, verifies exact main/pro/contra prompts and raw outputs, and checks the planner output reproduces `proPrompt`/`contraPrompt`. |
 | `inputs` | Optional online | With `--refetch`, refetches URL inputs and compares current `contentSha256` to the manifest. Text inputs do not need refetching. |
 | `merge` | Yes, if `raw` is present and valid | Re-runs the deterministic merger over verified raw model outputs and compares consensus/minority claims. |
 | `provenance` | Optional online/offline evidence | Confirms EigenCompute evidence contains the manifest app id, image digest, commit SHA, and agent address when available. |
@@ -41,6 +43,18 @@ curl 'http://<host>:3000/synthesize?include=raw' \
 ```
 
 If `raw` is `null`, offline mode reports skipped raw/merge checks and can still exit 0 as long as no check fails. `--strict` exits 1 on those skips.
+
+## Research audit packages
+
+The `/research` endpoint returns a signed manifest by default and omits raw audit data unless requested. To save a strict-verifiable research package:
+
+```bash
+curl 'http://<host>:3000/research?include=raw' \
+  -H 'content-type: application/json' \
+  -d '{"articleUrl":"https://example.com/news/story"}' > research-response.json
+```
+
+The research verifier branch checks the manifest hash, signer recovery, article refetch drift when `--refetch` is enabled, response/output hashes, raw planner/pro/contra outputs when present, and EigenCompute provenance when configured.
 
 ## EigenCompute provenance
 

@@ -11,6 +11,8 @@ import type {
   NewsResearchAgentRun,
   NewsResearchAgentRole,
   NewsResearchPromptBinding,
+  NewsResearchRaw,
+  NewsResearchRawAgentOutput,
   NewsResearchVerifiableBuild,
 } from "./types";
 import { POLICY, providerModelKey, type ModelSpec } from "./lib/policy";
@@ -22,7 +24,7 @@ import { hashText } from "./fetchers/sourceFetcher";
 import { renderPromptForModel } from "./fanout/structuredPrompt";
 import { parseStructuredOutput } from "./fanout/llmProxy";
 import { consensus, type ConsensusInput } from "./merger/consensus";
-import { buildManifest } from "./manifest/build";
+import { buildManifest, buildResearchManifest } from "./manifest/build";
 import type { ManifestSigner } from "./manifest/sign";
 import type { Sha256 } from "./lib/hash";
 
@@ -55,7 +57,7 @@ export type RunSynthesisResult =
 export type RunArticleResearchResult =
   | { status: "validation_error"; error: "article_url_required" | "article_url_invalid" }
   | { status: "fetch_error"; error: string; article: NewsResearchResponse["article"] }
-  | ({ status: "ok" } & NewsResearchResponse);
+  | ({ status: "ok"; raw: NewsResearchRaw } & Omit<NewsResearchResponse, "raw">);
 
 const RESEARCH_PROMPT_SOURCE_PATH = "src/pipeline.ts";
 const SOURCE_REPOSITORY_URL = "https://github.com/megabyte0x/eigenisedNews";
@@ -203,6 +205,7 @@ export async function runArticleResearch(deps: RunSynthesisDeps, request: NewsRe
   if (articleUrl.length === 0) return { status: "validation_error", error: "article_url_required" };
   if (!isHttpUrl(articleUrl)) return { status: "validation_error", error: "article_url_invalid" };
 
+  const requestHash = sha256OfCanonical({ articleUrl });
   const requestId = request.requestId ?? "standalone";
   const articleUrlHash = sha256Hex(articleUrl);
   const articleHost = new URL(articleUrl).host;
@@ -314,13 +317,14 @@ export async function runArticleResearch(deps: RunSynthesisDeps, request: NewsRe
     timeoutMs: POLICY.RESEARCH_LLM_TIMEOUT_MS,
     maxOutputTokens: POLICY.RESEARCH_LLM_MAX_OUTPUT_TOKENS,
   });
+  const proRawOutputSha256 = sha256Hex(proRaw.rawOutput);
   agentRuns.push({
     role: "pro",
     provider: spec.provider,
     model: spec.model,
     status: "ok",
     promptHash: proPromptHash,
-    rawOutputSha256: sha256Hex(proRaw.rawOutput),
+    rawOutputSha256: proRawOutputSha256,
     error: null,
   });
 
@@ -346,15 +350,44 @@ export async function runArticleResearch(deps: RunSynthesisDeps, request: NewsRe
     timeoutMs: POLICY.RESEARCH_LLM_TIMEOUT_MS,
     maxOutputTokens: POLICY.RESEARCH_LLM_MAX_OUTPUT_TOKENS,
   });
+  const contraRawOutputSha256 = sha256Hex(contraRaw.rawOutput);
   agentRuns.push({
     role: "contra",
     provider: spec.provider,
     model: spec.model,
     status: "ok",
     promptHash: contraPromptHash,
-    rawOutputSha256: sha256Hex(contraRaw.rawOutput),
+    rawOutputSha256: contraRawOutputSha256,
     error: null,
   });
+
+  const mainSummary = composeResearchSummary(proRaw.rawOutput, contraRaw.rawOutput);
+  const verifiableBuild = buildResearchVerifiableBuild(deps.deployment);
+  const raw: NewsResearchRaw = {
+    agentOutputs: [
+      buildResearchRawAgentOutput("main", spec.provider, spec.model, plannerPrompt, plannerRaw.rawOutput),
+      buildResearchRawAgentOutput("pro", spec.provider, spec.model, proPrompt, proRaw.rawOutput),
+      buildResearchRawAgentOutput("contra", spec.provider, spec.model, contraPrompt, contraRaw.rawOutput),
+    ],
+    mainSummary,
+  };
+  const manifest = buildResearchManifest({
+    deployment: deps.deployment,
+    request: { articleUrl, requestHash },
+    article: articleRecord,
+    promptBindings,
+    agentRuns,
+    outputs: {
+      proPromptSha256: sha256Hex(prompts.proPrompt),
+      contraPromptSha256: sha256Hex(prompts.contraPrompt),
+      proAnalysisSha256: proRawOutputSha256,
+      contraAnalysisSha256: contraRawOutputSha256,
+      mainSummarySha256: sha256Hex(mainSummary),
+      summaryAlgorithm: "composeResearchSummary/v1",
+    },
+    timestamp: deps.now(),
+  });
+  const signature = await deps.sign(manifest.manifestSha256);
 
   return {
     status: "ok",
@@ -363,10 +396,13 @@ export async function runArticleResearch(deps: RunSynthesisDeps, request: NewsRe
     contraPrompt: prompts.contraPrompt,
     proAnalysis: proRaw.rawOutput,
     contraAnalysis: contraRaw.rawOutput,
-    mainSummary: composeResearchSummary(proRaw.rawOutput, contraRaw.rawOutput),
+    mainSummary,
     promptBindings,
-    verifiableBuild: buildResearchVerifiableBuild(deps.deployment),
+    verifiableBuild,
     agentRuns,
+    manifest,
+    signature,
+    raw,
   };
 }
 
@@ -400,6 +436,16 @@ function buildResearchPromptBinding(args: {
     articleContentSha256: args.articleContentSha256,
     researchPrompt: args.researchPrompt,
   };
+}
+
+function buildResearchRawAgentOutput(
+  role: NewsResearchAgentRole,
+  provider: string,
+  model: string,
+  prompt: string,
+  rawOutput: string,
+): NewsResearchRawAgentOutput {
+  return { role, provider, model, prompt, rawOutput };
 }
 
 function researchPerspectiveForRole(role: NewsResearchAgentRole): NewsResearchPromptBinding["perspective"] {
@@ -636,7 +682,7 @@ function renderPerspectiveResearchPrompt(role: "pro" | "contra", researchPrompt:
   ].join("\n\n");
 }
 
-function parseResearchPrompts(rawOutput: string): { proPrompt: string; contraPrompt: string } {
+export function parseResearchPrompts(rawOutput: string): { proPrompt: string; contraPrompt: string } {
   const parsed = JSON.parse(rawOutput) as unknown;
   if (!isResearchPromptObject(parsed)) throw new Error("research_prompt_parse_failed");
   return { proPrompt: compactResearchPrompt(parsed.proPrompt), contraPrompt: compactResearchPrompt(parsed.contraPrompt) };
@@ -659,6 +705,6 @@ function isResearchPromptObject(value: unknown): value is { proPrompt: string; c
     && value.contraPrompt.trim().length > 0;
 }
 
-function composeResearchSummary(proAnalysis: string, contraAnalysis: string): string {
+export function composeResearchSummary(proAnalysis: string, contraAnalysis: string): string {
   return ["For the article:", proAnalysis, "", "Against the article:", contraAnalysis].join("\n");
 }

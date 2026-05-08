@@ -65,7 +65,7 @@ Failure modes:
 
 Failure responses are structured as `{ error, message, requestId, retryable }` plus article metadata when a fetch failure has an identified source.
 
-Success returns article metadata, prompts, perspective analyses, summary, prompt/build provenance, and agent-run diagnostics. `promptBindings` exposes the visible main/pro/contra system prompts plus system/full prompt hashes; `verifiableBuild` exposes deployment metadata and prompt source links.
+Success returns article metadata, prompts, perspective analyses, summary, prompt/build provenance, agent-run diagnostics, a signed research manifest, and optional raw audit data. `promptBindings` exposes the visible main/pro/contra system prompts plus system/full prompt hashes; `verifiableBuild` exposes deployment metadata and prompt source links.
 
 ## `POST /synthesize`
 
@@ -104,7 +104,9 @@ The article research path lives in `runArticleResearch` inside `src/pipeline.ts`
 8. Run the contra stage.
 9. Bind each stage to prompt provenance (`systemPromptSha256`, exact `promptHash`, article hash, generated research prompt).
 10. Attach deployment metadata (`appId`, `imageDigest`, `commitSha`, dashboard/source URLs).
-11. Compose the returned summary and diagnostics.
+11. Compose the returned summary deterministically from pro/contra outputs.
+12. Build and sign a research manifest containing article, prompt, output, run, and deployment hashes.
+13. Include raw planner/pro/contra prompts and outputs only when the HTTP caller requests `?include=raw`.
 
 ### Important constraint
 

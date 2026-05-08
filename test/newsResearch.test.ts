@@ -70,6 +70,24 @@ describe("POST /research", () => {
       promptSourcePath: "src/pipeline.ts",
     });
     expect(res.body.verifiableBuild.promptSourceUrl).toContain("/blob/abc/src/pipeline.ts");
+    expect(res.body.manifest.kind).toBe("research");
+    expect(res.body.manifest.article).toEqual(res.body.article);
+    expect(res.body.manifest.outputs.proAnalysisSha256).toBe(res.body.agentRuns[1].rawOutputSha256);
+    expect(res.body.signature).toMatch(/^0x[0-9a-f]+$/i);
+    expect(res.body.raw).toBeNull();
+  });
+
+  test("?include=raw returns full research audit payload", async () => {
+    const res = await request(makeApp())
+      .post("/research")
+      .query({ include: "raw" })
+      .send({ articleUrl: "https://news.example/story" });
+
+    expect(res.status).toBe(200);
+    expect(res.body.raw.agentOutputs.map((run: { role: string }) => run.role)).toEqual(["main", "pro", "contra"]);
+    expect(res.body.raw.agentOutputs[0].prompt).toContain("Create two research prompts");
+    expect(res.body.raw.agentOutputs[0].rawOutput).toContain("proPrompt");
+    expect(res.body.raw.mainSummary).toBe(res.body.mainSummary);
   });
 
   test("returns a validation error for invalid article URLs", async () => {

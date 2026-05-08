@@ -260,6 +260,12 @@ describe("runArticleResearch", () => {
     expect(result.promptBindings[2].systemPrompt).toContain("contra news research agent");
     expect(result.promptBindings[1].promptHash).toBe(result.agentRuns[1].promptHash);
     expect(result.verifiableBuild.promptSourcePath).toBe("src/pipeline.ts");
+    expect(result.manifest.kind).toBe("research");
+    expect(result.manifest.article).toEqual(result.article);
+    expect(result.manifest.outputs.mainSummarySha256).toMatch(/^sha256:/);
+    expect(result.raw.agentOutputs.map((run) => run.role)).toEqual(["main", "pro", "contra"]);
+    const recovered = await recoverManifestSigner(result.manifest.manifestSha256, result.signature);
+    expect(recovered.toLowerCase()).toBe(deps.deployment.agentAddress.toLowerCase());
     expect(callPrompts).toHaveLength(3);
     expect(callPrompts[0]).toContain("Create two research prompts");
     expect(callPrompts[1]).toContain("Research evidence that supports");

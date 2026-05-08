@@ -61,17 +61,22 @@ export function makeResearchHandler(deps: RunSynthesisDeps) {
         return;
       }
 
-      const { status: _status, ...response } = result;
+      const includeRaw = req.query.include === "raw" || req.query.include === "raw=1";
+      const { status: _status, raw, ...response } = result;
+      const responseBody: NewsResearchResponse = {
+        ...response,
+        raw: includeRaw ? raw : null,
+      };
       log("info", "research_request_completed", {
         requestId,
         route: "/research",
         status: 200,
-        articleHost: readUrlHost(response.article.url),
-        articleUrlHash: sha256Hex(response.article.url),
-        agentRunCount: response.agentRuns.length,
+        articleHost: readUrlHost(responseBody.article.url),
+        articleUrlHash: sha256Hex(responseBody.article.url),
+        agentRunCount: responseBody.agentRuns.length,
         totalLatencyMs: Date.now() - startedAt,
       });
-      res.status(200).json(response);
+      res.status(200).json(responseBody);
     } catch (error) {
       log("error", "research_request_failed", {
         requestId,

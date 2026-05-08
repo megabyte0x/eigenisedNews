@@ -1,13 +1,26 @@
-import type { InputRecord, Manifest, ModelRun, RawModelOutput, SynthesizeResponse } from "../types";
+import type {
+  InputRecord,
+  Manifest,
+  ModelRun,
+  NewsResearchAgentRun,
+  NewsResearchManifest,
+  NewsResearchPromptBinding,
+  NewsResearchRaw,
+  NewsResearchRawAgentOutput,
+  NewsResearchResponse,
+  RawModelOutput,
+  SynthesizeResponse,
+} from "../types";
 import { sha256Hex } from "../lib/hash";
 import { sha256OfCanonical } from "../lib/canonicalHash";
 import { providerModelKey } from "../lib/policy";
 import { isUnknownRecord, type UnknownRecord } from "../lib/guards";
-import { hashManifestWithPlaceholder } from "../manifest/build";
+import { hashManifestWithPlaceholder, hashResearchManifestWithPlaceholder } from "../manifest/build";
 import { recoverManifestSigner } from "../manifest/sign";
 import { parseStructuredOutput } from "../fanout/llmProxy";
 import { consensus, type ConsensusInput } from "../merger/consensus";
 import { fetchUrl as defaultFetchUrl, type FetchUrlResult } from "../fetchers/sourceFetcher";
+import { composeResearchSummary, parseResearchPrompts } from "../pipeline";
 import { matchProvenance, type ProvenanceChecker } from "./provenance";
 import type { CheckResult } from "./types";
 
@@ -24,6 +37,24 @@ export async function verifyResponse(response: unknown, opts: VerifyOptions = {}
   const parsed = parseResponse(response);
   out.push(parsed.schema);
   if (!parsed.ok) return out;
+  if (parsed.kind === "research") {
+    const typedResponse = parsed.response;
+    const m = typedResponse.manifest;
+
+    const recomputed = hashResearchManifestWithPlaceholder(m);
+    out.push(
+      recomputed === m.manifestSha256
+        ? { name: "manifest_hash", status: "pass", detail: m.manifestSha256 }
+        : { name: "manifest_hash", status: "fail", detail: `recomputed ${recomputed} != claimed ${m.manifestSha256}` }
+    );
+    out.push(await verifySignature(m.manifestSha256, typedResponse.signature, m.deployment.agentAddress));
+    out.push(await verifyResearchArticle(m, opts));
+    out.push(verifyResearchOutputs(typedResponse));
+    out.push(verifyResearchRawOutputs(typedResponse));
+    out.push(await verifyProvenance(m.deployment, opts));
+    return out;
+  }
+
   const typedResponse = parsed.response;
   const m = typedResponse.manifest;
 
@@ -34,30 +65,52 @@ export async function verifyResponse(response: unknown, opts: VerifyOptions = {}
       : { name: "manifest_hash", status: "fail", detail: `recomputed ${recomputed} != claimed ${m.manifestSha256}` }
   );
 
-  try {
-    const recovered = await recoverManifestSigner(m.manifestSha256, typedResponse.signature);
-    out.push(
-      recovered.toLowerCase() === m.deployment.agentAddress.toLowerCase()
-        ? { name: "signature", status: "pass", detail: `recovered ${recovered}` }
-        : { name: "signature", status: "fail", detail: `recovered ${recovered} != claimed ${m.deployment.agentAddress}` }
-    );
-  } catch (e) {
-    out.push({ name: "signature", status: "fail", detail: e instanceof Error ? e.message : String(e) });
-  }
+  out.push(await verifySignature(m.manifestSha256, typedResponse.signature, m.deployment.agentAddress));
 
   out.push(await verifyInputs(m, opts));
   const rawCheck = verifyRawOutputs(m, typedResponse.raw);
   out.push(rawCheck);
   out.push(rawCheck.status === "fail" ? { name: "merge", status: "skip", detail: "raw_outputs failed" } : verifyMerge(m, typedResponse.raw));
-  out.push(await verifyProvenance(m, opts));
+  out.push(await verifyProvenance(m.deployment, opts));
 
   return out;
 }
 
-type ParsedResponse = { ok: true; schema: CheckResult; response: SynthesizeResponse } | { ok: false; schema: CheckResult };
+async function verifySignature(manifestSha256: string, signature: `0x${string}`, agentAddress: string): Promise<CheckResult> {
+  try {
+    const recovered = await recoverManifestSigner(manifestSha256 as `sha256:${string}`, signature);
+    return recovered.toLowerCase() === agentAddress.toLowerCase()
+      ? { name: "signature", status: "pass", detail: `recovered ${recovered}` }
+      : { name: "signature", status: "fail", detail: `recovered ${recovered} != claimed ${agentAddress}` };
+  } catch (e) {
+    return { name: "signature", status: "fail", detail: e instanceof Error ? e.message : String(e) };
+  }
+}
+
+type ParsedResponse =
+  | { ok: true; kind: "synthesize"; schema: CheckResult; response: SynthesizeResponse }
+  | { ok: true; kind: "research"; schema: CheckResult; response: NewsResearchResponse }
+  | { ok: false; schema: CheckResult };
 
 function parseResponse(response: unknown): ParsedResponse {
   if (!isUnknownRecord(response)) return { ok: false, schema: { name: "schema", status: "fail", detail: "response is not an object" } };
+  if (isResearchManifest(response.manifest)) {
+    if (typeof response.signature !== "string" || !response.signature.startsWith("0x")) {
+      return { ok: false, schema: { name: "schema", status: "fail", detail: "signature missing or invalid" } };
+    }
+    if (response.raw !== null && !isNewsResearchRaw(response.raw)) {
+      return { ok: false, schema: { name: "schema", status: "fail", detail: "research raw must be null or a research raw object" } };
+    }
+    if (!isNewsResearchResponseBody(response)) {
+      return { ok: false, schema: { name: "schema", status: "fail", detail: "research response missing or malformed" } };
+    }
+    return {
+      ok: true,
+      kind: "research",
+      schema: { name: "schema", status: "pass", detail: "research response shape is valid" },
+      response: response as NewsResearchResponse,
+    };
+  }
   if (!isManifest(response.manifest)) return { ok: false, schema: { name: "schema", status: "fail", detail: "manifest missing or malformed" } };
   if (typeof response.signature !== "string" || !response.signature.startsWith("0x")) {
     return { ok: false, schema: { name: "schema", status: "fail", detail: "signature missing or invalid" } };
@@ -67,6 +120,7 @@ function parseResponse(response: unknown): ParsedResponse {
   }
   return {
     ok: true,
+    kind: "synthesize",
     schema: { name: "schema", status: "pass", detail: "response shape is valid" },
     response: { manifest: response.manifest, signature: response.signature as `0x${string}`, raw: response.raw },
   };
@@ -91,6 +145,25 @@ function isManifest(value: unknown): value is Manifest {
   );
 }
 
+function isResearchManifest(value: unknown): value is NewsResearchManifest {
+  if (!isUnknownRecord(value)) return false;
+  return (
+    value.schemaVersion === "1" &&
+    typeof value.rulesetVersion === "string" &&
+    value.kind === "research" &&
+    isDeployment(value.deployment) &&
+    isResearchRequestRecord(value.request) &&
+    isNewsResearchArticle(value.article) &&
+    Array.isArray(value.promptBindings) &&
+    value.promptBindings.every(isNewsResearchPromptBinding) &&
+    Array.isArray(value.agentRuns) &&
+    value.agentRuns.every(isNewsResearchAgentRun) &&
+    isNewsResearchOutputHashes(value.outputs) &&
+    typeof value.timestamp === "string" &&
+    typeof value.manifestSha256 === "string"
+  );
+}
+
 function isDeployment(value: unknown): value is Manifest["deployment"] {
   return (
     isUnknownRecord(value) &&
@@ -110,6 +183,10 @@ function isRequestRecord(value: unknown): value is Manifest["request"] {
   return isUnknownRecord(value) && typeof value.topic === "string" && typeof value.requestHash === "string";
 }
 
+function isResearchRequestRecord(value: unknown): value is NewsResearchManifest["request"] {
+  return isUnknownRecord(value) && typeof value.articleUrl === "string" && typeof value.requestHash === "string";
+}
+
 function isInputRecord(value: unknown): value is InputRecord {
   return (
     isUnknownRecord(value) &&
@@ -121,6 +198,109 @@ function isInputRecord(value: unknown): value is InputRecord {
     typeof value.byteLength === "number" &&
     (typeof value.error === "string" || value.error === null)
   );
+}
+
+function isNewsResearchResponseBody(value: UnknownRecord): value is NewsResearchResponse {
+  return (
+    isNewsResearchArticle(value.article) &&
+    typeof value.proPrompt === "string" &&
+    typeof value.contraPrompt === "string" &&
+    typeof value.proAnalysis === "string" &&
+    typeof value.contraAnalysis === "string" &&
+    typeof value.mainSummary === "string" &&
+    Array.isArray(value.promptBindings) &&
+    value.promptBindings.every(isNewsResearchPromptBinding) &&
+    isNewsResearchVerifiableBuild(value.verifiableBuild) &&
+    Array.isArray(value.agentRuns) &&
+    value.agentRuns.every(isNewsResearchAgentRun)
+  );
+}
+
+function isNewsResearchArticle(value: unknown): value is NewsResearchResponse["article"] {
+  return (
+    isUnknownRecord(value) &&
+    typeof value.url === "string" &&
+    (typeof value.contentSha256 === "string" || value.contentSha256 === null) &&
+    optionalString(value, "fetchedAt") &&
+    typeof value.byteLength === "number" &&
+    (typeof value.error === "string" || value.error === null)
+  );
+}
+
+function isNewsResearchPromptBinding(value: unknown): value is NewsResearchPromptBinding {
+  return (
+    isUnknownRecord(value) &&
+    isNewsResearchAgentRole(value.role) &&
+    (value.perspective === "planner" || value.perspective === "supports_article" || value.perspective === "challenges_article") &&
+    typeof value.provider === "string" &&
+    typeof value.model === "string" &&
+    typeof value.systemPrompt === "string" &&
+    typeof value.systemPromptSha256 === "string" &&
+    typeof value.promptHash === "string" &&
+    typeof value.articleUrl === "string" &&
+    (typeof value.articleContentSha256 === "string" || value.articleContentSha256 === null) &&
+    (typeof value.researchPrompt === "string" || value.researchPrompt === null)
+  );
+}
+
+function isNewsResearchAgentRun(value: unknown): value is NewsResearchAgentRun {
+  return (
+    isUnknownRecord(value) &&
+    isNewsResearchAgentRole(value.role) &&
+    typeof value.provider === "string" &&
+    typeof value.model === "string" &&
+    (value.status === "ok" || value.status === "error") &&
+    typeof value.promptHash === "string" &&
+    (typeof value.rawOutputSha256 === "string" || value.rawOutputSha256 === null) &&
+    (typeof value.error === "string" || value.error === null)
+  );
+}
+
+function isNewsResearchVerifiableBuild(value: unknown): value is NewsResearchResponse["verifiableBuild"] {
+  if (!isUnknownRecord(value)) return false;
+  const record = value;
+  if (!isDeployment(record as unknown)) return false;
+  return (
+    (typeof record.dashboardUrl === "string" || record.dashboardUrl === null) &&
+    typeof record.promptSourcePath === "string" &&
+    (typeof record.promptSourceUrl === "string" || record.promptSourceUrl === null)
+  );
+}
+
+function isNewsResearchOutputHashes(value: unknown): value is NewsResearchManifest["outputs"] {
+  return (
+    isUnknownRecord(value) &&
+    typeof value.proPromptSha256 === "string" &&
+    typeof value.contraPromptSha256 === "string" &&
+    typeof value.proAnalysisSha256 === "string" &&
+    typeof value.contraAnalysisSha256 === "string" &&
+    typeof value.mainSummarySha256 === "string" &&
+    value.summaryAlgorithm === "composeResearchSummary/v1"
+  );
+}
+
+function isNewsResearchRaw(value: unknown): value is NewsResearchRaw {
+  return (
+    isUnknownRecord(value) &&
+    Array.isArray(value.agentOutputs) &&
+    value.agentOutputs.every(isNewsResearchRawAgentOutput) &&
+    typeof value.mainSummary === "string"
+  );
+}
+
+function isNewsResearchRawAgentOutput(value: unknown): value is NewsResearchRawAgentOutput {
+  return (
+    isUnknownRecord(value) &&
+    isNewsResearchAgentRole(value.role) &&
+    typeof value.provider === "string" &&
+    typeof value.model === "string" &&
+    typeof value.prompt === "string" &&
+    typeof value.rawOutput === "string"
+  );
+}
+
+function isNewsResearchAgentRole(value: unknown): value is NewsResearchAgentRun["role"] {
+  return value === "main" || value === "pro" || value === "contra";
 }
 
 function isModelRun(value: unknown): value is ModelRun {
@@ -212,14 +392,92 @@ function verifyRawOutputs(m: SynthesizeResponse["manifest"], raw: SynthesizeResp
   return { name: "raw_outputs", status: "pass", detail: `${okModels.length} successful model raw outputs verified` };
 }
 
-async function verifyProvenance(m: SynthesizeResponse["manifest"], opts: VerifyOptions): Promise<CheckResult> {
-  if (m.deployment.environment === "local") return { name: "provenance", status: "skip", detail: "local deployment" };
+function verifyResearchOutputs(response: NewsResearchResponse): CheckResult {
+  const m = response.manifest;
+  const mismatches: string[] = [];
+  const eq = (a: unknown, b: unknown) => sha256OfCanonical(a) === sha256OfCanonical(b);
+
+  if (!eq(response.article, m.article)) mismatches.push("article");
+  if (!eq(response.promptBindings, m.promptBindings)) mismatches.push("promptBindings");
+  if (!eq(response.agentRuns, m.agentRuns)) mismatches.push("agentRuns");
+  if (!hasResearchRoles(response.promptBindings)) mismatches.push("promptBindingRoles");
+  if (!hasResearchRoles(response.agentRuns)) mismatches.push("agentRunRoles");
+  if (sha256Hex(response.proPrompt) !== m.outputs.proPromptSha256) mismatches.push("proPromptSha256");
+  if (sha256Hex(response.contraPrompt) !== m.outputs.contraPromptSha256) mismatches.push("contraPromptSha256");
+  if (sha256Hex(response.proAnalysis) !== m.outputs.proAnalysisSha256) mismatches.push("proAnalysisSha256");
+  if (sha256Hex(response.contraAnalysis) !== m.outputs.contraAnalysisSha256) mismatches.push("contraAnalysisSha256");
+  if (sha256Hex(response.mainSummary) !== m.outputs.mainSummarySha256) mismatches.push("mainSummarySha256");
+  if (composeResearchSummary(response.proAnalysis, response.contraAnalysis) !== response.mainSummary) mismatches.push("mainSummary");
+
+  return mismatches.length === 0
+    ? { name: "research_outputs", status: "pass", detail: "response fields match research manifest" }
+    : { name: "research_outputs", status: "fail", detail: `mismatch: ${mismatches.join(", ")}` };
+}
+
+function verifyResearchRawOutputs(response: NewsResearchResponse): CheckResult {
+  const raw = response.raw;
+  if (!raw) return { name: "research_raw", status: "skip", detail: "no raw research payload in response" };
+  if (raw.mainSummary !== response.mainSummary) return { name: "research_raw", status: "fail", detail: "raw mainSummary mismatch" };
+
+  const rawByRole = new Map(raw.agentOutputs.map((item) => [item.role, item]));
+  if (rawByRole.size !== raw.agentOutputs.length) return { name: "research_raw", status: "fail", detail: "duplicate raw agent role" };
+  if (raw.agentOutputs.length !== response.manifest.agentRuns.length) return { name: "research_raw", status: "fail", detail: "unexpected raw output count" };
+
+  for (const run of response.manifest.agentRuns) {
+    const rawOutput = rawByRole.get(run.role);
+    if (!rawOutput) return { name: "research_raw", status: "fail", detail: `missing raw output for ${run.role}` };
+    if (rawOutput.provider !== run.provider || rawOutput.model !== run.model) {
+      return { name: "research_raw", status: "fail", detail: `provider/model mismatch for ${run.role}` };
+    }
+    if (sha256Hex(rawOutput.prompt) !== run.promptHash) {
+      return { name: "research_raw", status: "fail", detail: `prompt hash mismatch for ${run.role}` };
+    }
+    if (sha256Hex(rawOutput.rawOutput) !== run.rawOutputSha256) {
+      return { name: "research_raw", status: "fail", detail: `raw output hash mismatch for ${run.role}` };
+    }
+  }
+
+  const main = rawByRole.get("main");
+  const pro = rawByRole.get("pro");
+  const contra = rawByRole.get("contra");
+  if (!main || !pro || !contra) return { name: "research_raw", status: "fail", detail: "expected main/pro/contra raw outputs" };
+
+  try {
+    const prompts = parseResearchPrompts(main.rawOutput);
+    if (prompts.proPrompt !== response.proPrompt || prompts.contraPrompt !== response.contraPrompt) {
+      return { name: "research_raw", status: "fail", detail: "planner raw output does not reproduce research prompts" };
+    }
+  } catch (e) {
+    return { name: "research_raw", status: "fail", detail: `planner raw output parse failed: ${e instanceof Error ? e.message : String(e)}` };
+  }
+  if (pro.rawOutput !== response.proAnalysis) return { name: "research_raw", status: "fail", detail: "pro raw output mismatch" };
+  if (contra.rawOutput !== response.contraAnalysis) return { name: "research_raw", status: "fail", detail: "contra raw output mismatch" };
+
+  return { name: "research_raw", status: "pass", detail: `${raw.agentOutputs.length} raw research outputs verified` };
+}
+
+function hasResearchRoles(items: Array<{ role: string }>): boolean {
+  return items.map((item) => item.role).join(",") === "main,pro,contra";
+}
+
+async function verifyProvenance(deployment: Manifest["deployment"], opts: VerifyOptions): Promise<CheckResult> {
+  if (deployment.environment === "local") return { name: "provenance", status: "skip", detail: "local deployment" };
   if (!opts.provenance) return { name: "provenance", status: "skip", detail: "no provenance checker configured" };
   try {
-    return matchProvenance(m.deployment, await opts.provenance(m.deployment));
+    return matchProvenance(deployment, await opts.provenance(deployment));
   } catch (e) {
     return { name: "provenance", status: "fail", detail: e instanceof Error ? e.message : String(e) };
   }
+}
+
+async function verifyResearchArticle(m: NewsResearchManifest, opts: VerifyOptions): Promise<CheckResult> {
+  if (!opts.refetchInputs) return { name: "inputs", status: "skip", detail: "refetchInputs disabled" };
+  if (m.article.error !== null || m.article.contentSha256 === null) return { name: "inputs", status: "skip", detail: "article was not fetchable" };
+  const fetcher = opts.fetchUrl ?? defaultFetchUrl;
+  const r = await fetcher(m.article.url);
+  if (r.error) return { name: "inputs", status: "fail", detail: `article refetch failed: ${r.error}` };
+  if (r.contentSha256 === m.article.contentSha256) return { name: "inputs", status: "pass", detail: "article content hash matches" };
+  return { name: "inputs", status: "fail", detail: "article content drifted or was tampered" };
 }
 
 async function verifyInputs(m: SynthesizeResponse["manifest"], opts: VerifyOptions): Promise<CheckResult> {

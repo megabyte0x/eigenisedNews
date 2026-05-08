@@ -52,7 +52,7 @@ export function NewsResearchApp({ fetchImpl = fetch }: NewsResearchAppProps) {
 
     setStatus({ kind: "loading" });
     try {
-      const res = await fetchImpl(resolveResearchUrl(), {
+      const res = await fetchImpl(resolveResearchUrl({ includeRaw: true }), {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ articleUrl: trimmedArticleUrl }),
@@ -396,6 +396,7 @@ function PromptProvenancePanel({ response }: { response: NewsResearchResponse })
             )}
           </div>
         ) : null}
+        <ResearchVerificationPanel response={response} />
         {bindings.length > 0 ? (
           <div className="prompt-binding-grid">
             {bindings.map((binding) => (
@@ -429,6 +430,25 @@ function PromptProvenancePanel({ response }: { response: NewsResearchResponse })
   );
 }
 
+function ResearchVerificationPanel({ response }: { response: NewsResearchResponse }) {
+  const manifestHash = response.manifest?.manifestSha256;
+  if (!manifestHash) return null;
+  const packageHref = `data:application/json;charset=utf-8,${encodeURIComponent(JSON.stringify(response, null, 2))}`;
+  const fileSuffix = shortHash(manifestHash).replace(/[^a-zA-Z0-9]/g, "");
+  return (
+    <div className="research-verification">
+      <div>
+        <p className="research-verification__kicker">Signed research package</p>
+        <p className="research-verification__hash" title={manifestHash}>{shortHash(manifestHash)}</p>
+      </div>
+      <a className="research-verification__action" download={`research-${fileSuffix || "manifest"}.json`} href={packageHref}>
+        Verify research
+      </a>
+      <code className="research-verification__command">npx tsx scripts/verify-manifest.ts response.json --refetch --ecloud --strict</code>
+    </div>
+  );
+}
+
 function ReadingBlock({ text, muted = false }: { text: string; muted?: boolean }) {
   const blocks = formatReadingBlocks(text);
   return (
@@ -453,14 +473,16 @@ function ReadingBlock({ text, muted = false }: { text: string; muted?: boolean }
   );
 }
 
-function resolveResearchUrl(): string {
+function resolveResearchUrl(opts: { includeRaw?: boolean } = {}): string {
   const runtimeConfig = readFrontendRuntimeConfig();
-  if (!runtimeConfig.apiBaseUrl?.trim()) return "/research";
+  if (!runtimeConfig.apiBaseUrl?.trim()) return opts.includeRaw ? "/research?include=raw" : "/research";
   const base = runtimeConfig.apiBaseUrl.trim().replace(/\/+$/, "") + "/";
   try {
-    return new URL("research", base).toString();
+    const url = new URL("research", base);
+    if (opts.includeRaw) url.searchParams.set("include", "raw");
+    return url.toString();
   } catch {
-    return "/research";
+    return opts.includeRaw ? "/research?include=raw" : "/research";
   }
 }
 

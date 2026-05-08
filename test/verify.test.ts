@@ -1,14 +1,16 @@
 import { describe, test, expect, beforeAll } from "vitest";
 import { verifyResponse, isAllPass, isStrictPass } from "../src/verifier/verify";
-import type { SynthesizeResponse } from "../src/types";
-import { FIXED_TS, clone, makeGoodResponse } from "./helpers/verifierFixture";
+import type { NewsResearchResponse, SynthesizeResponse } from "../src/types";
+import { FIXED_TS, clone, makeGoodResearchResponse, makeGoodResponse } from "./helpers/verifierFixture";
 import { runSynthesis, type RunSynthesisDeps } from "../src/pipeline";
 import { privateKeyToAccount, generatePrivateKey } from "viem/accounts";
 
 let goodResponse: SynthesizeResponse;
+let goodResearchResponse: NewsResearchResponse;
 
 beforeAll(async () => {
   goodResponse = await makeGoodResponse();
+  goodResearchResponse = await makeGoodResearchResponse();
 });
 
 describe("verifier result helpers", () => {
@@ -242,5 +244,82 @@ describe("verifyResponse — tampered fixtures", () => {
     });
 
     expect(results.find((r) => r.name === "provenance")?.status).toBe("fail");
+  });
+});
+
+describe("verifyResponse — research fixtures", () => {
+  test("all runnable research checks pass with raw audit payload", async () => {
+    const results = await verifyResponse(goodResearchResponse);
+    expect(isAllPass(results)).toBe(true);
+    expect(results.find((r) => r.name === "schema")?.status).toBe("pass");
+    expect(results.find((r) => r.name === "manifest_hash")?.status).toBe("pass");
+    expect(results.find((r) => r.name === "signature")?.status).toBe("pass");
+    expect(results.find((r) => r.name === "research_outputs")?.status).toBe("pass");
+    expect(results.find((r) => r.name === "research_raw")?.status).toBe("pass");
+  });
+
+  test("research input refetch detects matching article content", async () => {
+    const results = await verifyResponse(goodResearchResponse, {
+      refetchInputs: true,
+      fetchUrl: async (url) => ({
+        kind: "url",
+        url,
+        contentSha256: goodResearchResponse.article.contentSha256,
+        text: "same article",
+        fetchedAt: FIXED_TS,
+        byteLength: 12,
+        error: null,
+      }),
+    });
+    expect(results.find((r) => r.name === "inputs")?.status).toBe("pass");
+  });
+
+  test("research raw check skips when raw audit payload is omitted", async () => {
+    const response = clone(goodResearchResponse);
+    response.raw = null;
+    const results = await verifyResponse(response);
+    expect(results.find((r) => r.name === "research_raw")?.status).toBe("skip");
+    expect(isAllPass(results)).toBe(true);
+    expect(isStrictPass(results)).toBe(false);
+  });
+
+  test("research provenance passes when injected evidence matches deployment", async () => {
+    const response = clone(goodResearchResponse);
+    response.manifest.deployment = {
+      ...response.manifest.deployment,
+      environment: "mainnet-alpha",
+      appId: "0xabc",
+      imageDigest: "sha256:image",
+      commitSha: "commit123",
+      agentAddress: response.manifest.deployment.agentAddress,
+    };
+
+    const results = await verifyResponse(response, {
+      provenance: async () => ({
+        appId: "0xabc",
+        imageDigests: ["sha256:image"],
+        commitShas: ["commit123"],
+        derivedAddresses: [response.manifest.deployment.agentAddress],
+      }),
+    });
+    expect(results.find((r) => r.name === "provenance")?.status).toBe("pass");
+  });
+
+  test("tampered research response fields fail output verification", async () => {
+    const response = clone(goodResearchResponse);
+    response.proAnalysis = "tampered pro analysis";
+    const results = await verifyResponse(response);
+    expect(results.find((r) => r.name === "manifest_hash")?.status).toBe("pass");
+    expect(results.find((r) => r.name === "research_outputs")?.status).toBe("fail");
+  });
+
+  test("tampered research raw payload fails raw verification", async () => {
+    const response = clone(goodResearchResponse);
+    response.raw!.agentOutputs[0].rawOutput = JSON.stringify({
+      proPrompt: "Different pro prompt.",
+      contraPrompt: "Different contra prompt.",
+    });
+    const results = await verifyResponse(response);
+    expect(results.find((r) => r.name === "research_raw")?.status).toBe("fail");
   });
 });

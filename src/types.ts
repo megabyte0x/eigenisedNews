@@ -81,6 +81,14 @@ export type NewsResearchRequest = {
   requestId?: string;
 };
 
+export type NewsResearchArticle = {
+  url: string;
+  contentSha256: Sha256 | null;
+  fetchedAt?: string;
+  byteLength: number;
+  error: string | null;
+};
+
 export type NewsResearchAgentRole = "main" | "pro" | "contra";
 
 export type NewsResearchPromptBinding = {
@@ -112,14 +120,44 @@ export type NewsResearchVerifiableBuild = Manifest["deployment"] & {
   promptSourceUrl: string | null;
 };
 
+export type NewsResearchOutputHashes = {
+  proPromptSha256: Sha256;
+  contraPromptSha256: Sha256;
+  proAnalysisSha256: Sha256;
+  contraAnalysisSha256: Sha256;
+  mainSummarySha256: Sha256;
+  summaryAlgorithm: "composeResearchSummary/v1";
+};
+
+export type NewsResearchManifest = {
+  schemaVersion: "1";
+  rulesetVersion: string;
+  kind: "research";
+  deployment: Manifest["deployment"];
+  request: { articleUrl: string; requestHash: Sha256 };
+  article: NewsResearchArticle;
+  promptBindings: NewsResearchPromptBinding[];
+  agentRuns: NewsResearchAgentRun[];
+  outputs: NewsResearchOutputHashes;
+  timestamp: string;
+  manifestSha256: Sha256;
+};
+
+export type NewsResearchRawAgentOutput = {
+  role: NewsResearchAgentRole;
+  provider: string;
+  model: string;
+  prompt: string;
+  rawOutput: string;
+};
+
+export type NewsResearchRaw = {
+  agentOutputs: NewsResearchRawAgentOutput[];
+  mainSummary: string;
+};
+
 export type NewsResearchResponse = {
-  article: {
-    url: string;
-    contentSha256: Sha256 | null;
-    fetchedAt?: string;
-    byteLength: number;
-    error: string | null;
-  };
+  article: NewsResearchArticle;
   proPrompt: string;
   contraPrompt: string;
   proAnalysis: string;
@@ -128,6 +166,9 @@ export type NewsResearchResponse = {
   promptBindings: NewsResearchPromptBinding[];
   verifiableBuild: NewsResearchVerifiableBuild;
   agentRuns: NewsResearchAgentRun[];
+  manifest: NewsResearchManifest;
+  signature: `0x${string}`;
+  raw: NewsResearchRaw | null;
 };
 
 export type StructuredModelOutput = {

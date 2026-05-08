@@ -29,6 +29,7 @@ The `/research` response includes:
 - `promptBindings` for the main, pro, and contra agents, including each visible system prompt, system-prompt hash, exact full-prompt hash, article URL/content hash, and generated research prompt when applicable
 - `verifiableBuild` metadata (`appId`, `agentAddress`, `imageDigest`, `commitSha`, environment, EigenCloud dashboard URL, and prompt source path/URL)
 - `agentRuns`
+- a signed `manifest`, `signature`, and `raw` audit payload when requested with `?include=raw`
 
 Error responses use a stable shape: `error` code, human-readable `message`, `requestId`, `retryable`, and article metadata when a fetch failed after the source was identified.
 
@@ -65,17 +66,18 @@ The product uses a planner-first sequence:
 
 The returned `mainSummary` is then composed from the two perspective outputs.
 
-### Prompt provenance and build binding
+### Signed provenance and build binding
 
-The research response is meant to make the different perspectives inspectable, not hidden inside logs. The UI shows a **Perspective provenance** panel with:
+The research response is meant to make the different perspectives inspectable, not hidden inside logs. Each successful response includes a signed research manifest that binds:
 
 - the system prompt for the main planner, pro agent, and contra agent
 - the generated pro/contra research prompt
 - the system-prompt hash and the full prompt hash recorded in `agentRuns`
 - article content hash reuse across both perspectives
+- output hashes for pro analysis, contra analysis, and the deterministic summary
 - EigenCompute build metadata and links to the app dashboard / prompt source when deployment metadata is available
 
-This does not turn `/research` into the signed `/synthesize` verifier flow, but it gives reviewers a minimal bind from each visible perspective prompt to the article hash and the verifiable deployed build.
+The UI shows this in the **Perspective provenance** panel and exposes a signed research package for verifier workflows.
 
 ## Secondary workflow: signed synthesis console
 
