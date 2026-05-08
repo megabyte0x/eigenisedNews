@@ -83,6 +83,19 @@ export type NewsResearchRequest = {
 
 export type NewsResearchAgentRole = "main" | "pro" | "contra";
 
+export type NewsResearchPromptBinding = {
+  role: NewsResearchAgentRole;
+  perspective: "planner" | "supports_article" | "challenges_article";
+  provider: string;
+  model: string;
+  systemPrompt: string;
+  systemPromptSha256: Sha256;
+  promptHash: Sha256;
+  articleUrl: string;
+  articleContentSha256: Sha256 | null;
+  researchPrompt: string | null;
+};
+
 export type NewsResearchAgentRun = {
   role: NewsResearchAgentRole;
   provider: string;
@@ -91,6 +104,12 @@ export type NewsResearchAgentRun = {
   promptHash: Sha256;
   rawOutputSha256: Sha256 | null;
   error: string | null;
+};
+
+export type NewsResearchVerifiableBuild = Manifest["deployment"] & {
+  dashboardUrl: string | null;
+  promptSourcePath: string;
+  promptSourceUrl: string | null;
 };
 
 export type NewsResearchResponse = {
@@ -106,6 +125,8 @@ export type NewsResearchResponse = {
   proAnalysis: string;
   contraAnalysis: string;
   mainSummary: string;
+  promptBindings: NewsResearchPromptBinding[];
+  verifiableBuild: NewsResearchVerifiableBuild;
   agentRuns: NewsResearchAgentRun[];
 };
 

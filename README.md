@@ -30,7 +30,7 @@ curl http://localhost:3000/research \
   -d '{"articleUrl":"https://example.com/news/story"}'
 ```
 
-The response includes article metadata, the pro/contra prompts derived from the article, both analyses, and agent run diagnostics.
+The response includes article metadata, the pro/contra prompts derived from the article, both analyses, clean request/error metadata, and agent run diagnostics. It also returns `promptBindings` (the visible system prompt for each main/pro/contra agent, system-prompt hash, and full prompt hash) plus `verifiableBuild` metadata (`appId`, `imageDigest`, `commitSha`, dashboard URL, and prompt source path) so a reviewer can connect each perspective to the deployed EigenCompute build.
 
 When `FIRECRAWL_API_KEY` is configured, article fetching uses Firecrawl `/v2/scrape` first for clean markdown content. If Firecrawl is unavailable or returns no usable content, the fetcher falls back to the existing bounded direct HTTP request. Without `FIRECRAWL_API_KEY`, direct HTTP remains the only fetch path.
 
@@ -69,6 +69,8 @@ When `FRONTEND_API_BASE_URL` is unset, the UI uses same-origin `/research` and `
 ## Trust and verification summary
 
 The `/synthesize` path is built for replayable verification. The app records request and input hashes, per-model prompt hashes and outcomes, deterministic merge results, deployment metadata, and a signature over the manifest hash. The standalone verifier can then check integrity, signature recovery, raw output consistency, merge replay, refetch drift, and optional EigenCompute provenance.
+
+The `/research` path is intentionally lighter-weight than `/synthesize`, but its response now exposes prompt provenance: main/pro/contra system prompts, hashes for the exact full prompts that ran, article content hash, and verifiable-build metadata linking the prompt source to the deployed image/commit.
 
 Use the verifier directly:
 

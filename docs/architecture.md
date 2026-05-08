@@ -60,9 +60,12 @@ Accepts one body shape:
 Failure modes:
 
 - `400` for invalid or missing URL input
-- `502` for fetch/model-stage failures
+- `502` for most fetch/model-stage failures
+- `504` for timeout-shaped fetch failures
 
-Success returns article metadata, prompts, perspective analyses, summary, and agent-run diagnostics.
+Failure responses are structured as `{ error, message, requestId, retryable }` plus article metadata when a fetch failure has an identified source.
+
+Success returns article metadata, prompts, perspective analyses, summary, prompt/build provenance, and agent-run diagnostics. `promptBindings` exposes the visible main/pro/contra system prompts plus system/full prompt hashes; `verifiableBuild` exposes deployment metadata and prompt source links.
 
 ## `POST /synthesize`
 
@@ -99,7 +102,9 @@ The article research path lives in `runArticleResearch` inside `src/pipeline.ts`
 6. Parse the planner output into `proPrompt` and `contraPrompt`.
 7. Run the pro stage.
 8. Run the contra stage.
-9. Compose the returned summary and diagnostics.
+9. Bind each stage to prompt provenance (`systemPromptSha256`, exact `promptHash`, article hash, generated research prompt).
+10. Attach deployment metadata (`appId`, `imageDigest`, `commitSha`, dashboard/source URLs).
+11. Compose the returned summary and diagnostics.
 
 ### Important constraint
 

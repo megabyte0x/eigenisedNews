@@ -16,10 +16,21 @@ type ResearchStatus =
   | { kind: "idle" }
   | { kind: "client_error"; message: string }
   | { kind: "loading" }
-  | { kind: "api_error"; message: string }
+  | { kind: "api_error"; message: string; code: string | null; requestId: string | null; retryable: boolean | null }
   | { kind: "success"; response: NewsResearchResponse };
 
 type FormSubmitEvent = { preventDefault: () => void };
+
+type ResearchApiError = {
+  code: string | null;
+  message: string;
+  requestId: string | null;
+  retryable: boolean | null;
+};
+
+type FormattedBlock =
+  | { kind: "paragraph"; text: string }
+  | { kind: "list"; items: string[] };
 
 const SURFACE = "surface-card";
 const inputClassName = "form-input";
@@ -44,14 +55,20 @@ export function NewsResearchApp({ fetchImpl = fetch }: NewsResearchAppProps) {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ articleUrl: trimmedArticleUrl }),
       });
-      const body = (await res.json()) as NewsResearchResponse | { error: string };
+      const body = await readResponseJson(res);
       if (!res.ok) {
-        setStatus({ kind: "api_error", message: "error" in body ? body.error : `request_failed_${res.status}` });
+        setStatus({ kind: "api_error", ...normalizeResearchApiError(body, res.status) });
         return;
       }
       setStatus({ kind: "success", response: body as NewsResearchResponse });
     } catch (error) {
-      setStatus({ kind: "api_error", message: error instanceof Error ? error.message : String(error) });
+      setStatus({
+        kind: "api_error",
+        code: "transport_error",
+        message: error instanceof Error ? error.message : String(error),
+        requestId: null,
+        retryable: true,
+      });
     }
   }
 
@@ -109,7 +126,7 @@ export function NewsResearchApp({ fetchImpl = fetch }: NewsResearchAppProps) {
         </header>
 
         <div className="panel-grid panel-grid--research">
-          <section className={`${SURFACE} section-card`}>
+          <section className={`${SURFACE} section-card section-card--input`}>
             <div className="surface-card__body">
               <div className="section-header">
                 <p className="section-kicker">Input</p>
@@ -131,8 +148,11 @@ export function NewsResearchApp({ fetchImpl = fetch }: NewsResearchAppProps) {
 
                 {status.kind === "client_error" || status.kind === "api_error" ? (
                   <div aria-live="assertive" className="banner banner--danger" role="alert">
-                    <p className="banner__title">Research request</p>
+                    <p className="banner__title">Research request{status.kind === "api_error" && status.code ? ` · ${status.code}` : ""}</p>
                     <p className="banner__body">{status.message}</p>
+                    {status.kind === "api_error" && status.requestId ? (
+                      <p className="banner__body">Request ID: <code>{status.requestId}</code>{status.retryable ? " · retryable" : ""}</p>
+                    ) : null}
                   </div>
                 ) : null}
 
@@ -145,11 +165,13 @@ export function NewsResearchApp({ fetchImpl = fetch }: NewsResearchAppProps) {
                 <button className="button-primary" disabled={status.kind === "loading"} type="submit">
                   {status.kind === "loading" ? "Researching…" : "Research both sides"}
                 </button>
+
+                <ResearchFlow status={status.kind} />
               </form>
             </div>
           </section>
 
-          <section className={`${SURFACE} section-card`}>
+          <section className={`${SURFACE} section-card section-card--results`}>
             <div className="surface-card__body">
               <div className="section-header">
                 <p className="section-kicker">Results</p>
@@ -159,25 +181,23 @@ export function NewsResearchApp({ fetchImpl = fetch }: NewsResearchAppProps) {
 
               {response ? (
                 <div className="result-stack">
-                  {response.mainSummary ? (
-                    <section className="result-panel">
-                      <h3 className="result-panel__title">Editorial brief</h3>
-                      <p className="result-panel__meta">Main-agent overview</p>
-                      <div className="reading-block reading-block--muted">{response.mainSummary}</div>
-                    </section>
-                  ) : null}
-                  <PerspectivePanel
-                    title="For the article"
-                    subtitle="Evidence that reinforces the article's framing"
-                    tone="support"
-                    text={response.proAnalysis}
-                  />
-                  <PerspectivePanel
-                    title="Against the article"
-                    subtitle="Evidence that challenges or complicates the framing"
-                    tone="challenge"
-                    text={response.contraAnalysis}
-                  />
+                  <ResultDocket response={response} />
+                  <ArticleTracePanel article={response.article} build={response.verifiableBuild} />
+                  <div className="perspective-compare" aria-label="Side-by-side perspective comparison">
+                    <PerspectivePanel
+                      title="For the article"
+                      subtitle="Evidence that reinforces the article's framing"
+                      tone="support"
+                      text={response.proAnalysis}
+                    />
+                    <PerspectivePanel
+                      title="Against the article"
+                      subtitle="Evidence that challenges or complicates the framing"
+                      tone="challenge"
+                      text={response.contraAnalysis}
+                    />
+                  </div>
+                  <PromptProvenancePanel response={response} />
                   <details className="disclosure">
                     <summary className="disclosure__summary">
                       <span className="disclosure__summary-copy">
@@ -188,7 +208,13 @@ export function NewsResearchApp({ fetchImpl = fetch }: NewsResearchAppProps) {
                     </summary>
                     <div className="disclosure__content">
                       <pre className="code-block">
-                        {JSON.stringify({ proPrompt: response.proPrompt, contraPrompt: response.contraPrompt, agentRuns: response.agentRuns }, null, 2)}
+                        {JSON.stringify({
+                          proPrompt: response.proPrompt,
+                          contraPrompt: response.contraPrompt,
+                          promptBindings: response.promptBindings,
+                          verifiableBuild: response.verifiableBuild,
+                          agentRuns: response.agentRuns,
+                        }, null, 2)}
                       </pre>
                     </div>
                   </details>
@@ -204,6 +230,59 @@ export function NewsResearchApp({ fetchImpl = fetch }: NewsResearchAppProps) {
   );
 }
 
+function ResearchFlow({ status }: { status: ResearchStatus["kind"] }) {
+  const active = status === "loading";
+  const done = status === "success";
+  const attention = status === "client_error" || status === "api_error";
+  const steps = [
+    ["01", "Lock one source"],
+    ["02", "Split two prompts"],
+    ["03", "Compare lenses"],
+    ["04", "Bind provenance"],
+  ] as const;
+  return (
+    <ol className={`flow-rail ${active ? "flow-rail--active" : ""} ${done ? "flow-rail--done" : ""} ${attention ? "flow-rail--attention" : ""}`}>
+      {steps.map(([number, label]) => (
+        <li className="flow-step" key={number}>
+          <span className="flow-step__number">{number}</span>
+          <span className="flow-step__label">{label}</span>
+        </li>
+      ))}
+    </ol>
+  );
+}
+
+function ResultDocket({ response }: { response: NewsResearchResponse }) {
+  const promptCount = response.promptBindings?.length ?? 0;
+  const buildLabel = response.verifiableBuild?.environment ?? "local";
+  return (
+    <section className="results-docket" aria-label="Research run overview">
+      <div>
+        <p className="results-docket__eyebrow">Research docket</p>
+        <h3 className="results-docket__title">One article. Two adversarial readings.</h3>
+      </div>
+      <dl className="results-docket__stats">
+        <div>
+          <dt>Source</dt>
+          <dd>locked</dd>
+        </div>
+        <div>
+          <dt>Perspectives</dt>
+          <dd>pro / contra</dd>
+        </div>
+        <div>
+          <dt>Prompts</dt>
+          <dd>{promptCount}</dd>
+        </div>
+        <div>
+          <dt>Build</dt>
+          <dd>{buildLabel}</dd>
+        </div>
+      </dl>
+    </section>
+  );
+}
+
 function PerspectivePanel({
   title,
   subtitle,
@@ -215,12 +294,154 @@ function PerspectivePanel({
   text: string;
   tone: "support" | "challenge";
 }) {
+  const lens = tone === "support" ? "Supporting lens" : "Challenging lens";
   return (
     <section className={`result-panel ${tone === "support" ? "result-panel--support" : "result-panel--challenge"}`}>
-      <h3 className="result-panel__title">{title}</h3>
-      <p className="result-panel__meta">{subtitle}</p>
-      <div className="reading-block">{text}</div>
+      <div className="result-panel__header">
+        <div>
+          <h3 className="result-panel__title">{title}</h3>
+          <p className="result-panel__meta">{subtitle}</p>
+        </div>
+        <span className="lens-badge">{lens}</span>
+      </div>
+      <ReadingBlock text={text} />
     </section>
+  );
+}
+
+function ArticleTracePanel({
+  article,
+  build,
+}: {
+  article: NewsResearchResponse["article"];
+  build?: NewsResearchResponse["verifiableBuild"];
+}) {
+  const contentHash = article.contentSha256 ?? "unavailable";
+  return (
+    <section className="trace-panel" aria-label="Source article binding">
+      <div className="trace-panel__head">
+        <div>
+          <p className="trace-panel__kicker">Source article</p>
+          <a className="trace-panel__link" href={article.url} rel="noopener noreferrer" target="_blank">
+            {article.url}
+          </a>
+          <p className="trace-panel__subtitle">The same fetched article context is reused by both perspective agents.</p>
+        </div>
+        <span className="trace-panel__badge">Source locked</span>
+      </div>
+      <dl className="trace-list">
+        <div>
+          <dt>Article hash</dt>
+          <dd title={contentHash}>{shortHash(contentHash)}</dd>
+        </div>
+        {typeof article.byteLength === "number" ? (
+          <div>
+            <dt>Fetched bytes</dt>
+            <dd>{article.byteLength.toLocaleString()}</dd>
+          </div>
+        ) : null}
+        {article.fetchedAt ? (
+          <div>
+            <dt>Fetched at</dt>
+            <dd>{article.fetchedAt}</dd>
+          </div>
+        ) : null}
+        {build ? (
+          <div>
+            <dt>Build</dt>
+            <dd title={build.imageDigest}>{build.environment} · {shortHash(build.imageDigest)}</dd>
+          </div>
+        ) : null}
+      </dl>
+    </section>
+  );
+}
+
+function PromptProvenancePanel({ response }: { response: NewsResearchResponse }) {
+  const bindings = response.promptBindings ?? [];
+  const build = response.verifiableBuild;
+  if (bindings.length === 0 && !build) return null;
+
+  return (
+    <details className="provenance-panel">
+      <summary className="provenance-panel__summary">
+        <span className="provenance-panel__summary-copy">
+          <span className="section-kicker">Perspective provenance</span>
+          <span className="section-title section-title--sm">System prompts bound to the verifiable build</span>
+          <span className="section-description">
+            Open the audit trail for exact prompts, prompt hashes, and build metadata.
+          </span>
+        </span>
+        <span className="provenance-panel__summary-meta">{bindings.length || 0} bound prompts</span>
+      </summary>
+      <div className="provenance-panel__content">
+        {build ? (
+          <div className="build-strip">
+            <span title={build.commitSha}>Commit {shortHash(build.commitSha)}</span>
+            <span title={build.imageDigest}>Image {shortHash(build.imageDigest)}</span>
+            <span>{build.environment}</span>
+            {build.dashboardUrl ? (
+              <a href={build.dashboardUrl} rel="noopener noreferrer" target="_blank">
+                Verify build
+              </a>
+            ) : null}
+            {build.promptSourceUrl ? (
+              <a href={build.promptSourceUrl} rel="noopener noreferrer" target="_blank">
+                Prompt source
+              </a>
+            ) : (
+              <span>{build.promptSourcePath}</span>
+            )}
+          </div>
+        ) : null}
+        {bindings.length > 0 ? (
+          <div className="prompt-binding-grid">
+            {bindings.map((binding) => (
+              <article className="prompt-binding-card" key={binding.role}>
+                <div className="prompt-binding-card__head">
+                  <span className="prompt-binding-card__role">{labelForRole(binding.role)}</span>
+                  <span className="prompt-binding-card__perspective">{formatPerspective(binding.perspective)}</span>
+                </div>
+                <pre className="prompt-binding-card__prompt">{binding.systemPrompt}</pre>
+                {binding.researchPrompt ? (
+                  <p className="prompt-binding-card__research">
+                    <strong>Generated research prompt:</strong> {binding.researchPrompt}
+                  </p>
+                ) : null}
+                <dl className="prompt-binding-card__hashes">
+                  <div>
+                    <dt>System prompt</dt>
+                    <dd title={binding.systemPromptSha256}>{shortHash(binding.systemPromptSha256)}</dd>
+                  </div>
+                  <div>
+                    <dt>Full prompt</dt>
+                    <dd title={binding.promptHash}>{shortHash(binding.promptHash)}</dd>
+                  </div>
+                </dl>
+              </article>
+            ))}
+          </div>
+        ) : null}
+      </div>
+    </details>
+  );
+}
+
+function ReadingBlock({ text, muted = false }: { text: string; muted?: boolean }) {
+  const blocks = formatReadingBlocks(text);
+  return (
+    <div className={`reading-block ${muted ? "reading-block--muted" : ""}`}>
+      {blocks.map((block, index) => {
+        if (block.kind === "list") {
+          return (
+            <ul className="reading-block__list" key={`list-${index}`}>
+              {block.items.map((item, itemIndex) => <li key={`${index}-${itemIndex}`}>{item}</li>)}
+            </ul>
+          );
+        }
+        return <p className="reading-block__paragraph" key={`p-${index}`}>{block.text}</p>;
+      })}
+    </div>
   );
 }
 
@@ -252,4 +473,97 @@ function isHttpUrl(value: string): boolean {
   } catch {
     return false;
   }
+}
+
+async function readResponseJson(response: Response): Promise<unknown> {
+  try {
+    return await response.json();
+  } catch {
+    return null;
+  }
+}
+
+function normalizeResearchApiError(body: unknown, status: number): ResearchApiError {
+  if (isRecord(body)) {
+    const rawError = body.error;
+    const code = typeof rawError === "string" ? rawError : `request_failed_${status}`;
+    return {
+      code,
+      message: typeof body.message === "string" ? body.message : messageForResearchErrorCode(code, status),
+      requestId: typeof body.requestId === "string" ? body.requestId : null,
+      retryable: typeof body.retryable === "boolean" ? body.retryable : null,
+    };
+  }
+  const code = `request_failed_${status}`;
+  return { code, message: messageForResearchErrorCode(code, status), requestId: null, retryable: null };
+}
+
+function messageForResearchErrorCode(code: string, status: number): string {
+  switch (code) {
+    case "body_required":
+      return "Send a JSON body with an articleUrl field.";
+    case "article_url_required":
+      return "Enter a news article URL before starting research.";
+    case "article_url_invalid":
+      return "Enter a valid HTTP or HTTPS news article URL.";
+    case "timeout":
+      return "The article or agent request timed out. Please retry in a moment.";
+    case "network_error":
+      return "The article could not be reached from the research service.";
+    case "byte_cap_exceeded":
+      return "The article is too large for the bounded fetcher.";
+    case "research_agent_failed":
+      return "A research agent failed before both perspectives were completed. Please retry.";
+    default:
+      if (code.startsWith("http_")) return `The article request failed upstream (${code}).`;
+      return `The research request failed with HTTP ${status}.`;
+  }
+}
+
+function formatReadingBlocks(text: string): FormattedBlock[] {
+  const lines = text
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+  const blocks: FormattedBlock[] = [];
+  let pendingList: string[] = [];
+
+  for (const line of lines) {
+    const bullet = line.match(/^(?:[-*•]|\d+[.)])\s+(.+)$/);
+    if (bullet) {
+      pendingList.push(bullet[1].trim());
+      continue;
+    }
+    if (pendingList.length > 0) {
+      blocks.push({ kind: "list", items: pendingList });
+      pendingList = [];
+    }
+    blocks.push({ kind: "paragraph", text: line });
+  }
+
+  if (pendingList.length > 0) blocks.push({ kind: "list", items: pendingList });
+  if (blocks.length === 0 && text.trim().length > 0) return [{ kind: "paragraph", text: text.trim() }];
+  return blocks;
+}
+
+function shortHash(value: string): string {
+  if (!value || value === "unknown" || value === "unavailable") return value;
+  const prefix = value.startsWith("sha256:") ? "sha256:" : "";
+  const hash = prefix ? value.slice(prefix.length) : value;
+  if (hash.length <= 14) return value;
+  return `${prefix}${hash.slice(0, 8)}…${hash.slice(-6)}`;
+}
+
+function labelForRole(role: string): string {
+  if (role === "main") return "Main planner";
+  if (role === "pro") return "Pro perspective";
+  return "Contra perspective";
+}
+
+function formatPerspective(value: string): string {
+  return value.replace(/_/g, " ");
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
 }

@@ -56,6 +56,20 @@ describe("POST /research", () => {
     expect(res.body.proAnalysis).toContain("earnings evidence");
     expect(res.body.contraAnalysis).toContain("governance timing");
     expect(res.body.agentRuns.map((run: { role: string }) => run.role)).toEqual(["main", "pro", "contra"]);
+    expect(res.body.promptBindings.map((binding: { role: string }) => binding.role)).toEqual(["main", "pro", "contra"]);
+    expect(res.body.promptBindings[0].systemPrompt).toContain("main news research agent");
+    expect(res.body.promptBindings[1].systemPrompt).toContain("pro news research agent");
+    expect(res.body.promptBindings[2].systemPrompt).toContain("contra news research agent");
+    expect(res.body.promptBindings[1].researchPrompt).toContain("Support the article");
+    expect(res.body.promptBindings[1].promptHash).toBe(res.body.agentRuns[1].promptHash);
+    expect(res.body.promptBindings[1].articleContentSha256).toBe(res.body.article.contentSha256);
+    expect(res.body.verifiableBuild).toMatchObject({
+      appId: "0xapp",
+      imageDigest: "sha256:img",
+      commitSha: "abc",
+      promptSourcePath: "src/pipeline.ts",
+    });
+    expect(res.body.verifiableBuild.promptSourceUrl).toContain("/blob/abc/src/pipeline.ts");
   });
 
   test("returns a validation error for invalid article URLs", async () => {
@@ -63,6 +77,43 @@ describe("POST /research", () => {
 
     expect(res.status).toBe(400);
     expect(res.body.error).toBe("article_url_invalid");
+    expect(res.body.message).toMatch(/valid HTTP or HTTPS/i);
+    expect(res.body.requestId).toEqual(expect.any(String));
+  });
+
+  test("returns clean agent errors without leaking upstream details", async () => {
+    const res = await request(makeApp({
+      callModel: async () => {
+        throw new Error("secret upstream credential detail");
+      },
+    })).post("/research").send({ articleUrl: "https://news.example/story" });
+
+    expect(res.status).toBe(502);
+    expect(res.body.error).toBe("research_agent_failed");
+    expect(res.body.message).toMatch(/research agent failed/i);
+    expect(res.body.requestId).toEqual(expect.any(String));
+    expect(res.body.retryable).toBe(true);
+    expect(JSON.stringify(res.body)).not.toContain("secret upstream credential detail");
+  });
+
+  test("returns structured fetch errors with article metadata", async () => {
+    const res = await request(makeApp({
+      fetchUrl: async (url) => ({
+        kind: "url",
+        url,
+        contentSha256: null,
+        text: "",
+        fetchedAt: FIXED_TS,
+        byteLength: 0,
+        error: "http_500",
+      }),
+    })).post("/research").send({ articleUrl: "https://news.example/down" });
+
+    expect(res.status).toBe(502);
+    expect(res.body.error).toBe("http_500");
+    expect(res.body.message).toContain("article request failed upstream");
+    expect(res.body.retryable).toBe(true);
+    expect(res.body.article.url).toBe("https://news.example/down");
   });
 
   test("cleans and bounds HTML article context before model calls", async () => {

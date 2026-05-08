@@ -252,6 +252,14 @@ describe("runArticleResearch", () => {
     expect(result.proAnalysis).toContain("earnings beat");
     expect(result.contraAnalysis).toContain("stock sales");
     expect(result.agentRuns.map((run) => run.role)).toEqual(["main", "pro", "contra"]);
+    expect(result.promptBindings.map((binding) => binding.role)).toEqual(["main", "pro", "contra"]);
+    expect(result.promptBindings[0].perspective).toBe("planner");
+    expect(result.promptBindings[1].perspective).toBe("supports_article");
+    expect(result.promptBindings[2].perspective).toBe("challenges_article");
+    expect(result.promptBindings[1].systemPrompt).toContain("pro news research agent");
+    expect(result.promptBindings[2].systemPrompt).toContain("contra news research agent");
+    expect(result.promptBindings[1].promptHash).toBe(result.agentRuns[1].promptHash);
+    expect(result.verifiableBuild.promptSourcePath).toBe("src/pipeline.ts");
     expect(callPrompts).toHaveLength(3);
     expect(callPrompts[0]).toContain("Create two research prompts");
     expect(callPrompts[1]).toContain("Research evidence that supports");

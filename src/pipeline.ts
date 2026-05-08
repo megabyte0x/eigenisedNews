@@ -9,6 +9,9 @@ import type {
   NewsResearchRequest,
   NewsResearchResponse,
   NewsResearchAgentRun,
+  NewsResearchAgentRole,
+  NewsResearchPromptBinding,
+  NewsResearchVerifiableBuild,
 } from "./types";
 import { POLICY, providerModelKey, type ModelSpec } from "./lib/policy";
 import { sha256OfCanonical } from "./lib/canonicalHash";
@@ -53,6 +56,34 @@ export type RunArticleResearchResult =
   | { status: "validation_error"; error: "article_url_required" | "article_url_invalid" }
   | { status: "fetch_error"; error: string; article: NewsResearchResponse["article"] }
   | ({ status: "ok" } & NewsResearchResponse);
+
+const RESEARCH_PROMPT_SOURCE_PATH = "src/pipeline.ts";
+const SOURCE_REPOSITORY_URL = "https://github.com/megabyte0x/eigenisedNews";
+
+const RESEARCH_PLANNER_SYSTEM_PROMPT = [
+  "You are the main news research agent for eigenisedNews.",
+  "Create two research prompts for a news article URL.",
+  "The first prompt must ask a pro agent to deeply research evidence that supports, backs, or strengthens the article's framing.",
+  "The second prompt must ask a contra agent to deeply research evidence that challenges, weakens, or complicates the article's framing.",
+  "Keep each generated prompt under 600 characters and focused on the 3 strongest lines of inquiry.",
+  "Return only JSON with keys proPrompt and contraPrompt. Do not include markdown.",
+].join("\n");
+
+const RESEARCH_PRO_SYSTEM_PROMPT = [
+  "You are the pro news research agent.",
+  "Research the supporting side of the article using the provided context first.",
+  "Use evidence, cite concrete facts from the article text, and clearly separate facts from inference.",
+  "If the article concerns markets, companies, earnings, policy, or governance, mention relevant evidence from the article and identify what further external evidence would be needed.",
+  "Keep the answer concise: at most 6 bullets plus one short verdict, under 500 words total.",
+].join("\n");
+
+const RESEARCH_CONTRA_SYSTEM_PROMPT = [
+  "You are the contra news research agent.",
+  "Research the opposing side of the article using the provided context first.",
+  "Use evidence, cite concrete facts from the article text, and clearly separate facts from inference.",
+  "If the article concerns markets, companies, earnings, policy, or governance, mention relevant evidence from the article and identify what further external evidence would be needed.",
+  "Keep the answer concise: at most 6 bullets plus one short verdict, under 500 words total.",
+].join("\n");
 
 type ValidationError = "topic_required" | "topic_too_long" | "no_inputs" | "too_many_inputs";
 
@@ -211,6 +242,7 @@ export async function runArticleResearch(deps: RunSynthesisDeps, request: NewsRe
 
   const spec = POLICY.MODEL_SET[0];
   const agentRuns: NewsResearchAgentRun[] = [];
+  const promptBindings: NewsResearchPromptBinding[] = [];
 
   const articleContext = prepareArticleContext(article.text);
   log("info", "research_context_prepared", {
@@ -228,6 +260,16 @@ export async function runArticleResearch(deps: RunSynthesisDeps, request: NewsRe
 
   const plannerPrompt = renderResearchPlannerPrompt(article.url, articleContext.text);
   const plannerPromptHash = sha256Hex(plannerPrompt);
+  promptBindings.push(buildResearchPromptBinding({
+    role: "main",
+    provider: spec.provider,
+    model: spec.model,
+    systemPrompt: RESEARCH_PLANNER_SYSTEM_PROMPT,
+    promptHash: plannerPromptHash,
+    articleUrl: article.url,
+    articleContentSha256: article.contentSha256,
+    researchPrompt: null,
+  }));
   const plannerRaw = await callResearchAgent(deps, {
     requestId,
     stage: "main",
@@ -252,6 +294,16 @@ export async function runArticleResearch(deps: RunSynthesisDeps, request: NewsRe
 
   const proPrompt = renderPerspectiveResearchPrompt("pro", prompts.proPrompt, article.url, articleContext.text);
   const proPromptHash = sha256Hex(proPrompt);
+  promptBindings.push(buildResearchPromptBinding({
+    role: "pro",
+    provider: spec.provider,
+    model: spec.model,
+    systemPrompt: RESEARCH_PRO_SYSTEM_PROMPT,
+    promptHash: proPromptHash,
+    articleUrl: article.url,
+    articleContentSha256: article.contentSha256,
+    researchPrompt: prompts.proPrompt,
+  }));
   const proRaw = await callResearchAgent(deps, {
     requestId,
     stage: "pro",
@@ -274,6 +326,16 @@ export async function runArticleResearch(deps: RunSynthesisDeps, request: NewsRe
 
   const contraPrompt = renderPerspectiveResearchPrompt("contra", prompts.contraPrompt, article.url, articleContext.text);
   const contraPromptHash = sha256Hex(contraPrompt);
+  promptBindings.push(buildResearchPromptBinding({
+    role: "contra",
+    provider: spec.provider,
+    model: spec.model,
+    systemPrompt: RESEARCH_CONTRA_SYSTEM_PROMPT,
+    promptHash: contraPromptHash,
+    articleUrl: article.url,
+    articleContentSha256: article.contentSha256,
+    researchPrompt: prompts.contraPrompt,
+  }));
   const contraRaw = await callResearchAgent(deps, {
     requestId,
     stage: "contra",
@@ -302,6 +364,8 @@ export async function runArticleResearch(deps: RunSynthesisDeps, request: NewsRe
     proAnalysis: proRaw.rawOutput,
     contraAnalysis: contraRaw.rawOutput,
     mainSummary: composeResearchSummary(proRaw.rawOutput, contraRaw.rawOutput),
+    promptBindings,
+    verifiableBuild: buildResearchVerifiableBuild(deps.deployment),
     agentRuns,
   };
 }
@@ -313,6 +377,52 @@ type PreparedArticleContext = {
   normalizedCharLength: number;
   truncated: boolean;
 };
+
+function buildResearchPromptBinding(args: {
+  role: NewsResearchAgentRole;
+  provider: string;
+  model: string;
+  systemPrompt: string;
+  promptHash: Sha256;
+  articleUrl: string;
+  articleContentSha256: Sha256 | null;
+  researchPrompt: string | null;
+}): NewsResearchPromptBinding {
+  return {
+    role: args.role,
+    perspective: researchPerspectiveForRole(args.role),
+    provider: args.provider,
+    model: args.model,
+    systemPrompt: args.systemPrompt,
+    systemPromptSha256: sha256Hex(args.systemPrompt),
+    promptHash: args.promptHash,
+    articleUrl: args.articleUrl,
+    articleContentSha256: args.articleContentSha256,
+    researchPrompt: args.researchPrompt,
+  };
+}
+
+function researchPerspectiveForRole(role: NewsResearchAgentRole): NewsResearchPromptBinding["perspective"] {
+  if (role === "main") return "planner";
+  return role === "pro" ? "supports_article" : "challenges_article";
+}
+
+function buildResearchVerifiableBuild(deployment: Manifest["deployment"]): NewsResearchVerifiableBuild {
+  const appIdentifier = deployment.appId !== "local" && deployment.appId !== "unknown"
+    ? deployment.appId
+    : deployment.agentAddress !== "unknown"
+      ? deployment.agentAddress
+      : null;
+  const hasVerifiableDashboard = deployment.environment === "mainnet-alpha" && appIdentifier !== null;
+  const commitSha = deployment.commitSha.trim();
+  const hasCommit = commitSha.length > 0 && commitSha !== "unknown";
+  return {
+    ...deployment,
+    dashboardUrl: hasVerifiableDashboard ? `https://verify.eigencloud.xyz/app/${appIdentifier}` : null,
+    promptSourcePath: RESEARCH_PROMPT_SOURCE_PATH,
+    promptSourceUrl: hasCommit ? `${SOURCE_REPOSITORY_URL}/blob/${commitSha}/${RESEARCH_PROMPT_SOURCE_PATH}` : null,
+  };
+}
 
 async function callResearchAgent(
   deps: RunSynthesisDeps,
@@ -444,12 +554,7 @@ function isHttpUrl(value: string): boolean {
 
 function renderResearchPlannerPrompt(articleUrl: string, articleText: string): string {
   return [
-    "You are the main news research agent for eigenisedNews.",
-    "Create two research prompts for a news article URL.",
-    "The first prompt must ask a pro agent to deeply research evidence that supports, backs, or strengthens the article's framing.",
-    "The second prompt must ask a contra agent to deeply research evidence that challenges, weakens, or complicates the article's framing.",
-    "Keep each generated prompt under 600 characters and focused on the 3 strongest lines of inquiry.",
-    "Return only JSON with keys proPrompt and contraPrompt. Do not include markdown.",
+    RESEARCH_PLANNER_SYSTEM_PROMPT,
     `Article URL: ${articleUrl}`,
     "Article text:",
     articleText,
@@ -521,13 +626,8 @@ function decodeCodePoint(codePoint: number, fallback: string): string {
 }
 
 function renderPerspectiveResearchPrompt(role: "pro" | "contra", researchPrompt: string, articleUrl: string, articleText: string): string {
-  const stance = role === "pro" ? "supporting" : "opposing";
   return [
-    `You are the ${role} news research agent.` ,
-    `Research the ${stance} side of the article using the provided context first.`,
-    "Use evidence, cite concrete facts from the article text, and clearly separate facts from inference.",
-    "If the article concerns markets, companies, earnings, policy, or governance, mention relevant evidence from the article and identify what further external evidence would be needed.",
-    "Keep the answer concise: at most 6 bullets plus one short verdict, under 500 words total.",
+    role === "pro" ? RESEARCH_PRO_SYSTEM_PROMPT : RESEARCH_CONTRA_SYSTEM_PROMPT,
     "Research prompt:",
     researchPrompt,
     `Article URL: ${articleUrl}`,

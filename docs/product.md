@@ -26,7 +26,11 @@ The `/research` response includes:
 - `proAnalysis`
 - `contraAnalysis`
 - `mainSummary`
+- `promptBindings` for the main, pro, and contra agents, including each visible system prompt, system-prompt hash, exact full-prompt hash, article URL/content hash, and generated research prompt when applicable
+- `verifiableBuild` metadata (`appId`, `agentAddress`, `imageDigest`, `commitSha`, environment, EigenCloud dashboard URL, and prompt source path/URL)
 - `agentRuns`
+
+Error responses use a stable shape: `error` code, human-readable `message`, `requestId`, `retryable`, and article metadata when a fetch failed after the source was identified.
 
 ### Why this mode exists
 
@@ -61,6 +65,18 @@ The product uses a planner-first sequence:
 
 The returned `mainSummary` is then composed from the two perspective outputs.
 
+### Prompt provenance and build binding
+
+The research response is meant to make the different perspectives inspectable, not hidden inside logs. The UI shows a **Perspective provenance** panel with:
+
+- the system prompt for the main planner, pro agent, and contra agent
+- the generated pro/contra research prompt
+- the system-prompt hash and the full prompt hash recorded in `agentRuns`
+- article content hash reuse across both perspectives
+- EigenCompute build metadata and links to the app dashboard / prompt source when deployment metadata is available
+
+This does not turn `/research` into the signed `/synthesize` verifier flow, but it gives reviewers a minimal bind from each visible perspective prompt to the article hash and the verifiable deployed build.
+
 ## Secondary workflow: signed synthesis console
 
 The synthesis console is still available through **Open synthesis console** in the UI.
@@ -83,13 +99,13 @@ It then runs the fixed model set, merges structured claims deterministically, an
 | Default UI mode | yes | no |
 | Input shape | one article URL | topic + URLs and/or pasted text |
 | Output shape | pro/con analyses | manifest + signature + optional raw outputs |
-| Verifier path | no | yes |
+| Verifier path | prompt/build provenance only | yes |
 
 ## UI surfaces
 
 ### Research-first UI
 
-The default browser surface is the article research interface. It is the product’s main landing experience and is optimized to show the editorial brief and the two perspectives before deeper diagnostics.
+The default browser surface is the article research interface. It is the product’s main landing experience and is optimized to show a research docket, article binding, and the two bullet/paragraph-formatted perspectives before deeper diagnostics.
 
 ### Operator console
 
