@@ -237,12 +237,10 @@ describe("NewsResearchApp", () => {
     expect(container.textContent).not.toContain("## Supporting Evidence");
   });
 
-  test("keeps the synthesis console available", () => {
+  test("does not expose the synthesis console from the research UI", () => {
     render(React.createElement(NewsResearchApp, { fetchImpl: vi.fn<typeof fetch>() }));
 
-    fireEvent.click(screen.getByRole("button", { name: /open synthesis console/i }));
-
-    expect(screen.getByRole("heading", { name: /compose request/i })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /run synthesis/i })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /open synthesis console/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: /compose request/i })).not.toBeInTheDocument();
   });
 });

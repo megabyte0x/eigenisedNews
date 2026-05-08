@@ -1,5 +1,4 @@
 import { useState, type ReactNode } from "react";
-import { OperatorConsole } from "./OperatorConsole";
 import type { NewsResearchResponse } from "../types";
 
 type FetchLike = typeof fetch;
@@ -38,7 +37,6 @@ const SURFACE = "surface-card";
 const inputClassName = "form-input";
 
 export function NewsResearchApp({ fetchImpl = fetch }: NewsResearchAppProps) {
-  const [mode, setMode] = useState<"research" | "console">("research");
   const [articleUrl, setArticleUrl] = useState("");
   const [status, setStatus] = useState<ResearchStatus>({ kind: "idle" });
 
@@ -74,21 +72,6 @@ export function NewsResearchApp({ fetchImpl = fetch }: NewsResearchAppProps) {
     }
   }
 
-  if (mode === "console") {
-    return (
-      <div className="app-shell">
-        <div className="app-shell__inner">
-          <div className="topbar">
-            <button className="button-ghost button-ghost--plain" onClick={() => setMode("research")} type="button">
-              Back to article research
-            </button>
-          </div>
-        </div>
-        <OperatorConsole fetchImpl={fetchImpl} />
-      </div>
-    );
-  }
-
   const response = status.kind === "success" ? status.response : null;
 
   return (
@@ -106,9 +89,6 @@ export function NewsResearchApp({ fetchImpl = fetch }: NewsResearchAppProps) {
             <div className="hero-actions">
               <div className="stack-md">
                 <div className="hero-actions__row">
-                  <button className="button-ghost" onClick={() => setMode("console")} type="button">
-                    Open synthesis console
-                  </button>
                   <a
                     aria-label="Open the EigenCloud app dashboard in a new tab"
                     className="hero-action-link"
