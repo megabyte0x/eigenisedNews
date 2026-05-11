@@ -9,10 +9,10 @@ function renderFrontendShell(runtimeConfig = {}) {
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>eigenisedNews research</title>
+    <title>The Eigenised Gazette · eigenisedNews research</title>
     <meta
       name="description"
-      content="Research news articles with EigenCompute agents that analyze pro and contra perspectives from the same source."
+      content="A newspaper-styled research desk for submitting news articles and reading pro/contra EigenCompute analysis."
     />
     <link rel="stylesheet" href="/app.css" />
   </head>

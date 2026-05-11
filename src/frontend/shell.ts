@@ -9,10 +9,10 @@ export function renderFrontendShell(runtimeConfig: FrontendRuntimeConfig = {}): 
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>eigenisedNews operator console</title>
+    <title>The Eigenised Gazette · eigenisedNews research</title>
     <meta
       name="description"
-      content="Operator console for submitting synthesis requests and inspecting signed consensus manifests."
+      content="A newspaper-styled research desk for submitting news articles and reading pro/contra EigenCompute analysis."
     />
     <link rel="stylesheet" href="/app.css" />
   </head>

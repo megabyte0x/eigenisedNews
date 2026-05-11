@@ -80,10 +80,15 @@ export function NewsResearchApp({ fetchImpl = fetch }: NewsResearchAppProps) {
         <header className={`${SURFACE} surface-card--hero`}>
           <div className="surface-card__body surface-card__body--hero hero-grid">
             <div>
-              <p className="hero-kicker">EigenCompute news agents</p>
-              <h1 className="hero-title">News article research</h1>
+              <p className="hero-kicker">The Eigenised Gazette</p>
+              <h1 className="hero-title">News Article Research</h1>
+              <div className="edition-line" aria-label="Newspaper edition metadata">
+                <span>Daily proof desk</span>
+                <span>Est. 2026</span>
+                <span>Adversarial edition</span>
+              </div>
               <p className="hero-copy">
-                Send one news URL. The main agent creates pro and contra research prompts, then two perspective agents return evidence-backed analysis.
+                Send one news URL. The main agent sets the assignment, then pro and contra correspondents file evidence-backed columns from the same source.
               </p>
             </div>
             <div className="hero-actions">
@@ -100,7 +105,7 @@ export function NewsResearchApp({ fetchImpl = fetch }: NewsResearchAppProps) {
                   </a>
                 </div>
                 <p className="hero-note">
-                  Reader-first output up front, with prompts and agent runs preserved below for inspection.
+                  Front-page findings first, with prompts and agent runs preserved as the audit trail below the fold.
                 </p>
               </div>
             </div>

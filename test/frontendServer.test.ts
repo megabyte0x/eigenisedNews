@@ -7,7 +7,7 @@ describe("frontend shell", () => {
   test("renderFrontendShell defaults to same-origin shell markup", () => {
     const html = renderFrontendShell();
 
-    expect(html).toContain("eigenisedNews operator console");
+    expect(html).toContain("The Eigenised Gazette · eigenisedNews research");
     expect(html).toContain('/app.js');
     expect(html).toContain('/app.css');
     expect(html).toContain('<script type="application/json" id="frontend-runtime-config">{}');
