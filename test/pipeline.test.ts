@@ -277,6 +277,42 @@ describe("runArticleResearch", () => {
     ]);
   });
 
+  test("accepts markdown-fenced planner JSON before running pro and contra agents", async () => {
+    const callPrompts: string[] = [];
+    const deps = makeDeps({
+      callModel: async ({ prompt }) => {
+        callPrompts.push(prompt);
+        if (callPrompts.length === 1) {
+          return {
+            rawOutput: [
+              "Here are the requested research prompts:",
+              "```json",
+              JSON.stringify({
+                proPrompt: "Research evidence that backs the article's reported timeline.",
+                contraPrompt: "Research evidence that complicates the article's reported timeline.",
+              }, null, 2),
+              "```",
+              "These prompts are ready for the next agents.",
+            ].join("\n"),
+            latencyMs: 5,
+          };
+        }
+        if (callPrompts.length === 2) return { rawOutput: "Pro: timeline evidence supports the article.", latencyMs: 5 };
+        return { rawOutput: "Contra: timeline gaps complicate the article.", latencyMs: 5 };
+      },
+    });
+
+    const result = await runArticleResearch(deps, { articleUrl: "https://news.example/fenced" });
+
+    expect(result.status).toBe("ok");
+    if (result.status !== "ok") throw new Error("expected_ok_result");
+    expect(result.proPrompt).toContain("backs");
+    expect(result.contraPrompt).toContain("complicates");
+    expect(result.proAnalysis).toContain("timeline evidence");
+    expect(result.contraAnalysis).toContain("timeline gaps");
+    expect(callPrompts).toHaveLength(3);
+  });
+
   test("rejects non-url article input before model calls", async () => {
     let calls = 0;
     const result = await runArticleResearch(

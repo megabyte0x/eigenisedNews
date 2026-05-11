@@ -199,7 +199,7 @@ export function parseStructuredOutput(rawOutput: string): StructuredModelOutput 
   return { claims, summary: obj.summary };
 }
 
-function extractStructuredOutputJson(rawOutput: string): string {
+export function extractStructuredOutputJson(rawOutput: string): string {
   const trimmed = rawOutput.trim();
   if (trimmed.startsWith("{") && trimmed.endsWith("}")) return trimmed;
 
@@ -213,9 +213,10 @@ function extractStructuredOutputJson(rawOutput: string): string {
 }
 
 function extractJsonFenceBody(trimmed: string): string | null {
-  const match = trimmed.match(/^```(?:json)?\s*\n([\s\S]*?)\n```$/i);
-  if (!match) return null;
-  const candidate = match[1].trim();
+  const fences = collectJsonFenceBodies(trimmed);
+  if (fences.length === 0) return null;
+  if (fences.length !== 1) throw new Error("structured_output_not_pure_json");
+  const candidate = fences[0];
   if (!candidate.startsWith("{") || !candidate.endsWith("}")) {
     throw new Error("structured_output_not_pure_json");
   }
@@ -227,9 +228,18 @@ function extractSingleWrappedJsonObject(trimmed: string): string | null {
   if (candidates.length !== 1) return null;
 
   const { start, end } = candidates[0];
-  if (trimmed.slice(end + 1).trim().length > 0) return null;
-
   return trimmed.slice(start, end + 1);
+}
+
+function collectJsonFenceBodies(text: string): string[] {
+  const bodies: string[] = [];
+  const fencePattern = /```([^\n`]*)\n([\s\S]*?)```/g;
+  for (const match of text.matchAll(fencePattern)) {
+    const language = match[1].trim().toLowerCase();
+    if (language !== "" && language !== "json") continue;
+    bodies.push(match[2].trim());
+  }
+  return bodies;
 }
 
 function collectTopLevelJsonObjects(text: string): Array<{ start: number; end: number }> {

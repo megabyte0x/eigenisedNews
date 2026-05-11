@@ -467,8 +467,17 @@ describe("parseStructuredOutput", () => {
     expect(parseStructuredOutput(fenced)).toEqual({ claims: [], summary: "" });
   });
 
+  test("parses prose-wrapped code-fenced output", () => {
+    const fenced = "Here is the JSON:\n```json\n{\"claims\":[],\"summary\":\"\"}\n```\nDone.";
+    expect(parseStructuredOutput(fenced)).toEqual({ claims: [], summary: "" });
+  });
+
   test("parses leading prose wrapped output", () => {
     expect(parseStructuredOutput('Sure!\n{"claims":[],"summary":""}')).toEqual({ claims: [], summary: "" });
+  });
+
+  test("parses single JSON object with trailing prose", () => {
+    expect(parseStructuredOutput('{"claims":[],"summary":""}\nDone.')).toEqual({ claims: [], summary: "" });
   });
 
   test("rejects malformed wrapped output", () => {
@@ -478,6 +487,12 @@ describe("parseStructuredOutput", () => {
   test("rejects ambiguous wrapped output", () => {
     expect(() =>
       parseStructuredOutput('Sure!\n{"claims":[],"summary":""}\n{"claims":[],"summary":"again"}')
+    ).toThrow(/structured_output_not_pure_json/);
+  });
+
+  test("rejects multiple JSON fences", () => {
+    expect(() =>
+      parseStructuredOutput('```json\n{"claims":[],"summary":""}\n```\n```json\n{"claims":[],"summary":"again"}\n```')
     ).toThrow(/structured_output_not_pure_json/);
   });
 

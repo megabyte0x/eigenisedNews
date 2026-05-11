@@ -22,7 +22,7 @@ import { log } from "./lib/log";
 import type { FetchUrlResult } from "./fetchers/sourceFetcher";
 import { hashText } from "./fetchers/sourceFetcher";
 import { renderPromptForModel } from "./fanout/structuredPrompt";
-import { parseStructuredOutput } from "./fanout/llmProxy";
+import { extractStructuredOutputJson, parseStructuredOutput } from "./fanout/llmProxy";
 import { consensus, type ConsensusInput } from "./merger/consensus";
 import { buildManifest, buildResearchManifest } from "./manifest/build";
 import type { ManifestSigner } from "./manifest/sign";
@@ -683,7 +683,12 @@ function renderPerspectiveResearchPrompt(role: "pro" | "contra", researchPrompt:
 }
 
 export function parseResearchPrompts(rawOutput: string): { proPrompt: string; contraPrompt: string } {
-  const parsed = JSON.parse(rawOutput) as unknown;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(extractStructuredOutputJson(rawOutput)) as unknown;
+  } catch {
+    throw new Error("research_prompt_parse_failed");
+  }
   if (!isResearchPromptObject(parsed)) throw new Error("research_prompt_parse_failed");
   return { proPrompt: compactResearchPrompt(parsed.proPrompt), contraPrompt: compactResearchPrompt(parsed.contraPrompt) };
 }
