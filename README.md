@@ -2,6 +2,8 @@
 
 eigenisedNews is a research product for interrogating a single news article from both sides.
 
+![](./architecture.png)
+
 Its primary workflow accepts one article URL, fetches that article once, prepares a shared article context, asks a main agent to create two research prompts, then returns a pro analysis and a contra analysis over the same source material. The repo also keeps a secondary operator workflow: a signed multi-model synthesis console that produces a verifiable manifest over a fixed model set.
 
 ## What the product does
@@ -131,3 +133,7 @@ What is still out of scope:
 - streaming responses
 - EIP-712 typed-data signatures
 - request authentication / rate limiting
+
+---
+
+Deck: https://pitch.com/v/eigenised-news-eu3czs
