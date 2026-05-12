@@ -1,5 +1,13 @@
-import { useEffect, useState, type ReactNode } from "react";
-import type { NewsResearchResponse, ResearchHistoryEntry } from "../types";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import type {
+  NewsResearchQueueEnqueueResponse,
+  NewsResearchQueueJob,
+  NewsResearchQueueJobStatus,
+  NewsResearchQueueListResponse,
+  NewsResearchQueueSummary,
+  NewsResearchResponse,
+  ResearchHistoryEntry,
+} from "../types";
 import { isUnknownRecord } from "../lib/guards";
 import { isNewsResearchResponse, isResearchHistoryResponse } from "../lib/manifestGuards";
 import { isHttpUrl } from "../lib/url";
@@ -17,6 +25,15 @@ type ResearchStatus =
   | { kind: "loading" }
   | { kind: "api_error"; message: string; code: string | null; requestId: string | null; retryable: boolean | null }
   | { kind: "success"; response: NewsResearchResponse };
+
+type ResearchMode = "single" | "queue";
+
+type ResearchQueueStatus =
+  | { kind: "idle" }
+  | { kind: "client_error"; message: string }
+  | { kind: "loading"; message: string }
+  | { kind: "api_error"; message: string; code: string | null; requestId: string | null; retryable: boolean | null }
+  | { kind: "ready"; message: string };
 
 type ResearchApiError = {
   code: string | null;
@@ -64,9 +81,14 @@ const SURFACE = "surface-card";
 const inputClassName = "form-input";
 
 export function NewsResearchApp({ fetchImpl = fetch }: NewsResearchAppProps) {
+  const [researchMode, setResearchMode] = useState<ResearchMode>("single");
   const [articleUrl, setArticleUrl] = useState("");
   const [status, setStatus] = useState<ResearchStatus>({ kind: "idle" });
+  const [queueUrlText, setQueueUrlText] = useState("");
+  const [queueStatus, setQueueStatus] = useState<ResearchQueueStatus>({ kind: "idle" });
+  const [queueSnapshot, setQueueSnapshot] = useState<NewsResearchQueueListResponse | null>(null);
   const [historyStatus, setHistoryStatus] = useState<ResearchHistoryStatus>({ kind: "loading" });
+  const lastQueueSuccessCount = useRef(0);
 
   async function loadHistory() {
     setHistoryStatus((current) => current.kind === "ready" ? current : { kind: "loading" });
@@ -84,6 +106,16 @@ export function NewsResearchApp({ fetchImpl = fetch }: NewsResearchAppProps) {
         message: error instanceof Error ? error.message : "Previous research could not be loaded.",
       });
     }
+  }
+
+  function rememberQueueSnapshot(snapshot: NewsResearchQueueListResponse) {
+    setQueueSnapshot(snapshot);
+    if (snapshot.queue.succeeded > lastQueueSuccessCount.current) {
+      lastQueueSuccessCount.current = snapshot.queue.succeeded;
+      void loadHistory();
+      return;
+    }
+    lastQueueSuccessCount.current = snapshot.queue.succeeded;
   }
 
   useEffect(() => {
@@ -111,6 +143,23 @@ export function NewsResearchApp({ fetchImpl = fetch }: NewsResearchAppProps) {
       cancelled = true;
     };
   }, [fetchImpl]);
+
+  useEffect(() => {
+    if (!queueSnapshot?.jobs.some(isActiveQueueJob)) return;
+    const timer = window.setInterval(() => {
+      void refreshQueue({ silent: true });
+    }, 2500);
+    return () => {
+      window.clearInterval(timer);
+    };
+  }, [fetchImpl, queueSnapshot?.queue.active]);
+
+  function selectResearchMode(mode: ResearchMode) {
+    if (mode === "queue" && !queueUrlText.trim() && articleUrl.trim()) {
+      setQueueUrlText(articleUrl.trim());
+    }
+    setResearchMode(mode);
+  }
 
   async function onSubmit(event: SubmitEventLike) {
     event.preventDefault();
@@ -155,6 +204,90 @@ export function NewsResearchApp({ fetchImpl = fetch }: NewsResearchAppProps) {
     }
   }
 
+  async function onQueueSubmit(event: SubmitEventLike) {
+    event.preventDefault();
+    const articleUrls = parseQueueArticleUrls(queueUrlText);
+    if (articleUrls.length === 0) {
+      setQueueStatus({ kind: "client_error", message: "Enter at least one news article URL to queue." });
+      return;
+    }
+    if (articleUrls.some((url) => !isHttpUrl(url))) {
+      setQueueStatus({ kind: "client_error", message: "Every queued article must be a valid HTTP or HTTPS URL." });
+      return;
+    }
+
+    setQueueStatus({ kind: "loading", message: "Queueing article research jobs…" });
+    try {
+      const res = await fetchImpl(resolveFrontendApiUrl("research/jobs", { includeRaw: true }), {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ articleUrls }),
+      });
+      const body = await readResponseJson(res);
+      if (!res.ok) {
+        setQueueStatus({ kind: "api_error", ...normalizeResearchApiError(body, res.status) });
+        return;
+      }
+      if (!isNewsResearchQueueEnqueueResponse(body)) {
+        setQueueStatus({
+          kind: "api_error",
+          code: "malformed_queue_response",
+          message: "The research queue returned an unexpected response shape.",
+          requestId: null,
+          retryable: true,
+        });
+        return;
+      }
+      rememberQueueSnapshot(body);
+      setQueueStatus({ kind: "ready", message: `Queued ${body.jobs.length} article research ${body.jobs.length === 1 ? "job" : "jobs"}.` });
+    } catch (error) {
+      setQueueStatus({
+        kind: "api_error",
+        code: "transport_error",
+        message: error instanceof Error ? error.message : String(error),
+        requestId: null,
+        retryable: true,
+      });
+    }
+  }
+
+  async function refreshQueue(options: { silent?: boolean } = {}) {
+    const silent = options.silent === true;
+    if (!silent) setQueueStatus({ kind: "loading", message: "Refreshing research queue…" });
+    try {
+      const res = await fetchImpl(resolveFrontendApiUrl("research/jobs"));
+      const body = await readResponseJson(res);
+      if (!res.ok) {
+        if (!silent) setQueueStatus({ kind: "api_error", ...normalizeResearchApiError(body, res.status) });
+        return;
+      }
+      if (!isNewsResearchQueueListResponse(body)) {
+        if (!silent) {
+          setQueueStatus({
+            kind: "api_error",
+            code: "malformed_queue_response",
+            message: "The research queue returned an unexpected response shape.",
+            requestId: null,
+            retryable: true,
+          });
+        }
+        return;
+      }
+      rememberQueueSnapshot(body);
+      if (!silent) setQueueStatus({ kind: "ready", message: "Research queue refreshed." });
+    } catch (error) {
+      if (!silent) {
+        setQueueStatus({
+          kind: "api_error",
+          code: "transport_error",
+          message: error instanceof Error ? error.message : String(error),
+          requestId: null,
+          retryable: true,
+        });
+      }
+    }
+  }
+
   async function openStoredReport(entry: ResearchHistoryEntry) {
     setStatus({ kind: "loading" });
     try {
@@ -181,6 +314,13 @@ export function NewsResearchApp({ fetchImpl = fetch }: NewsResearchAppProps) {
         retryable: true,
       });
     }
+  }
+
+  function openQueuedJob(job: NewsResearchQueueJob) {
+    if (job.status !== "succeeded" || !job.result) return;
+    setArticleUrl(job.result.manifest.request.articleUrl);
+    setStatus({ kind: "success", response: job.result });
+    void loadHistory();
   }
 
   const response = status.kind === "success" ? status.response : null;
@@ -229,43 +369,57 @@ export function NewsResearchApp({ fetchImpl = fetch }: NewsResearchAppProps) {
               <div className="section-header">
                 <p className="section-kicker">Input</p>
                 <h2 className="section-title">Research a URL</h2>
-                <p className="section-description">Use a news article URL so both sides analyze the same source.</p>
+                <p className="section-description">Use one article now, or queue a batch so long-running research jobs can complete in the background.</p>
               </div>
 
-              <form className="form-stack" onSubmit={onSubmit}>
-                <label className="field-group">
-                  <span className="field-label">News article URL</span>
-                  <input
-                    aria-label="News article URL"
-                    className={inputClassName}
-                    onChange={(event) => setArticleUrl(event.target.value)}
-                    placeholder="https://example.com/news/story"
-                    value={articleUrl}
-                  />
-                </label>
+              <ResearchModeTabs mode={researchMode} onSelect={selectResearchMode} />
 
-                {status.kind === "client_error" || status.kind === "api_error" ? (
-                  <div aria-live="assertive" className="banner banner--danger" role="alert">
-                    <p className="banner__title">Research request{status.kind === "api_error" && status.code ? ` · ${status.code}` : ""}</p>
-                    <p className="banner__body">{status.message}</p>
-                    {status.kind === "api_error" && status.requestId ? (
-                      <p className="banner__body">Request ID: <code>{status.requestId}</code>{status.retryable ? " · retryable" : ""}</p>
-                    ) : null}
-                  </div>
-                ) : null}
+              {researchMode === "single" ? (
+                <form className="form-stack" onSubmit={onSubmit}>
+                  <label className="field-group">
+                    <span className="field-label">News article URL</span>
+                    <input
+                      aria-label="News article URL"
+                      className={inputClassName}
+                      onChange={(event) => setArticleUrl(event.target.value)}
+                      placeholder="https://example.com/news/story"
+                      value={articleUrl}
+                    />
+                  </label>
 
-                {status.kind === "loading" ? (
-                  <p aria-live="polite" className="status-copy">
-                    Research in progress. Results and diagnostics will appear below.
-                  </p>
-                ) : null}
+                  {status.kind === "client_error" || status.kind === "api_error" ? (
+                    <div aria-live="assertive" className="banner banner--danger" role="alert">
+                      <p className="banner__title">Research request{status.kind === "api_error" && status.code ? ` · ${status.code}` : ""}</p>
+                      <p className="banner__body">{status.message}</p>
+                      {status.kind === "api_error" && status.requestId ? (
+                        <p className="banner__body">Request ID: <code>{status.requestId}</code>{status.retryable ? " · retryable" : ""}</p>
+                      ) : null}
+                    </div>
+                  ) : null}
 
-                <button className="button-primary" disabled={status.kind === "loading"} type="submit">
-                  {status.kind === "loading" ? "Researching…" : "Research both sides"}
-                </button>
+                  {status.kind === "loading" ? (
+                    <p aria-live="polite" className="status-copy">
+                      Research in progress. Results and diagnostics will appear below.
+                    </p>
+                  ) : null}
 
-                <ResearchFlow status={status.kind} />
-              </form>
+                  <button className="button-primary" disabled={status.kind === "loading"} type="submit">
+                    {status.kind === "loading" ? "Researching…" : "Research both sides"}
+                  </button>
+
+                  <ResearchFlow status={status.kind} />
+                </form>
+              ) : (
+                <QueueResearchPanel
+                  queueSnapshot={queueSnapshot}
+                  queueStatus={queueStatus}
+                  queueUrlText={queueUrlText}
+                  onOpenJob={openQueuedJob}
+                  onQueueUrlTextChange={setQueueUrlText}
+                  onRefresh={() => void refreshQueue()}
+                  onSubmit={onQueueSubmit}
+                />
+              )}
 
               <PreviousResearchPanel
                 historyStatus={historyStatus}
@@ -355,6 +509,189 @@ function ResearchFlow({ status }: { status: ResearchStatus["kind"] }) {
         </li>
       ))}
     </ol>
+  );
+}
+
+function ResearchModeTabs({ mode, onSelect }: { mode: ResearchMode; onSelect: (mode: ResearchMode) => void }) {
+  return (
+    <div className="mode-switch" role="group" aria-label="Research mode">
+      <button
+        aria-pressed={mode === "single"}
+        className={`mode-switch__button ${mode === "single" ? "mode-switch__button--active" : ""}`}
+        onClick={() => onSelect("single")}
+        type="button"
+      >
+        Single URL
+      </button>
+      <button
+        aria-pressed={mode === "queue"}
+        className={`mode-switch__button ${mode === "queue" ? "mode-switch__button--active" : ""}`}
+        onClick={() => onSelect("queue")}
+        type="button"
+      >
+        Queue batch
+      </button>
+    </div>
+  );
+}
+
+function QueueResearchPanel({
+  queueSnapshot,
+  queueStatus,
+  queueUrlText,
+  onOpenJob,
+  onQueueUrlTextChange,
+  onRefresh,
+  onSubmit,
+}: {
+  queueSnapshot: NewsResearchQueueListResponse | null;
+  queueStatus: ResearchQueueStatus;
+  queueUrlText: string;
+  onOpenJob: (job: NewsResearchQueueJob) => void;
+  onQueueUrlTextChange: (value: string) => void;
+  onRefresh: () => void;
+  onSubmit: (event: SubmitEventLike) => void;
+}) {
+  const isLoading = queueStatus.kind === "loading";
+  return (
+    <div className="queue-panel">
+      <form className="form-stack" onSubmit={onSubmit}>
+        <label className="field-group">
+          <span className="field-label">Article URLs</span>
+          <textarea
+            aria-label="Article URLs"
+            className={`${inputClassName} form-textarea queue-url-textarea`}
+            onChange={(event) => onQueueUrlTextChange(event.target.value)}
+            placeholder={"One article URL per line\nhttps://example.com/news/one\nhttps://example.com/news/two"}
+            value={queueUrlText}
+          />
+        </label>
+
+        {queueStatus.kind === "client_error" || queueStatus.kind === "api_error" ? (
+          <div aria-live="assertive" className={`banner ${queueStatus.kind === "client_error" ? "banner--warning" : "banner--danger"}`} role="alert">
+            <p className="banner__title">Queue request{queueStatus.kind === "api_error" && queueStatus.code ? ` · ${queueStatus.code}` : ""}</p>
+            <p className="banner__body">{queueStatus.message}</p>
+            {queueStatus.kind === "api_error" && queueStatus.requestId ? (
+              <p className="banner__body">Request ID: <code>{queueStatus.requestId}</code>{queueStatus.retryable ? " · retryable" : ""}</p>
+            ) : null}
+          </div>
+        ) : null}
+
+        {queueStatus.kind === "loading" ? (
+          <p aria-live="polite" className="status-copy">{queueStatus.message}</p>
+        ) : null}
+        {queueStatus.kind === "ready" ? (
+          <p aria-live="polite" className="status-copy">{queueStatus.message}</p>
+        ) : null}
+        {queueStatus.kind === "idle" ? (
+          <p className="status-copy">
+            Queue multiple URLs for sequential background research. Jobs keep their status and can be opened when complete.
+          </p>
+        ) : null}
+
+        <div className="queue-actions">
+          <button className="button-primary" disabled={isLoading} type="submit">
+            {isLoading ? "Queue working…" : "Queue article research"}
+          </button>
+          <button className="button-ghost button-ghost--plain" disabled={isLoading} onClick={onRefresh} type="button">
+            Refresh queue
+          </button>
+        </div>
+      </form>
+
+      <QueueSnapshotPanel queueSnapshot={queueSnapshot} onOpenJob={onOpenJob} />
+    </div>
+  );
+}
+
+function QueueSnapshotPanel({
+  queueSnapshot,
+  onOpenJob,
+}: {
+  queueSnapshot: NewsResearchQueueListResponse | null;
+  onOpenJob: (job: NewsResearchQueueJob) => void;
+}) {
+  if (!queueSnapshot) {
+    return (
+      <section className="queue-status-panel" aria-label="Research queue status">
+        <div className="queue-status-panel__empty">No queue snapshot loaded yet. Queue URLs or refresh the queue to inspect jobs.</div>
+      </section>
+    );
+  }
+
+  const jobs = queueSnapshot.jobs.slice(0, 12);
+  return (
+    <section className="queue-status-panel" aria-label="Research queue status">
+      <div className="queue-status-panel__head">
+        <div>
+          <p className="section-kicker">Queue</p>
+          <h3 className="section-title section-title--sm">Research jobs</h3>
+        </div>
+        <span className={`queue-status-panel__badge ${queueSnapshot.queue.active > 0 ? "queue-status-panel__badge--active" : ""}`}>
+          {queueSnapshot.queue.active > 0 ? `${queueSnapshot.queue.active} active` : "Idle"}
+        </span>
+      </div>
+      <QueueSummary queue={queueSnapshot.queue} />
+      {jobs.length === 0 ? (
+        <p className="queue-status-panel__empty">No queued research jobs yet.</p>
+      ) : (
+        <ol className="queue-job-list">
+          {jobs.map((job) => (
+            <li className="queue-job-list__item" key={job.id}>
+              <QueueJobCard job={job} onOpen={onOpenJob} />
+            </li>
+          ))}
+        </ol>
+      )}
+    </section>
+  );
+}
+
+function QueueSummary({ queue }: { queue: NewsResearchQueueSummary }) {
+  const items = [
+    ["Queued", queue.queued],
+    ["Running", queue.running],
+    ["Succeeded", queue.succeeded],
+    ["Failed", queue.failed],
+    ["Concurrency", queue.concurrency],
+    ["Stored", queue.storage],
+  ] as const;
+  return (
+    <dl className="queue-summary-grid">
+      {items.map(([label, value]) => (
+        <div className="queue-summary-item" key={label}>
+          <dt>{label}</dt>
+          <dd>{value}</dd>
+        </div>
+      ))}
+    </dl>
+  );
+}
+
+function QueueJobCard({ job, onOpen }: { job: NewsResearchQueueJob; onOpen: (job: NewsResearchQueueJob) => void }) {
+  const canOpen = job.status === "succeeded" && !!job.result;
+  return (
+    <article className={`queue-job-card queue-job-card--${job.status}`}>
+      <div className="queue-job-card__head">
+        <div>
+          <span className="queue-job-card__host">{hostForUrl(job.articleUrl)}</span>
+          <p className="queue-job-card__url">{job.articleUrl}</p>
+        </div>
+        <span className={`queue-job-card__status queue-job-card__status--${job.status}`}>{formatQueueStatus(job.status)}</span>
+      </div>
+      <div className="queue-job-card__meta">
+        {job.position ? <span>Position {job.position}</span> : null}
+        <span title={job.requestId}>Request {shortHash(job.requestId)}</span>
+        <span>Updated {formatQueueDate(job.updatedAt)}</span>
+      </div>
+      {job.result ? <p className="queue-job-card__preview">{trimPreview(job.result.mainSummary || job.result.proAnalysis || job.result.contraAnalysis)}</p> : null}
+      {job.error ? <p className="queue-job-card__error">{job.error.message}</p> : null}
+      {canOpen ? (
+        <button className="button-ghost button-ghost--plain queue-job-card__action" onClick={() => onOpen(job)} type="button">
+          Open result
+        </button>
+      ) : null}
+    </article>
   );
 }
 
@@ -842,6 +1179,88 @@ function isBrowserVerifyCheck(value: unknown): value is BrowserVerifyCheck {
   );
 }
 
+function parseQueueArticleUrls(value: string): string[] {
+  return value
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+}
+
+function isNewsResearchQueueEnqueueResponse(value: unknown): value is NewsResearchQueueEnqueueResponse {
+  return (
+    isUnknownRecord(value) &&
+    Array.isArray(value.jobs) &&
+    value.jobs.every(isNewsResearchQueueJob) &&
+    isNewsResearchQueueSummary(value.queue)
+  );
+}
+
+function isNewsResearchQueueListResponse(value: unknown): value is NewsResearchQueueListResponse {
+  return isNewsResearchQueueEnqueueResponse(value);
+}
+
+function isNewsResearchQueueJob(value: unknown): value is NewsResearchQueueJob {
+  if (!isUnknownRecord(value)) return false;
+  return (
+    typeof value.id === "string" &&
+    typeof value.requestId === "string" &&
+    typeof value.articleUrl === "string" &&
+    isNewsResearchQueueJobStatus(value.status) &&
+    (typeof value.position === "number" || value.position === null) &&
+    typeof value.createdAt === "string" &&
+    typeof value.updatedAt === "string" &&
+    (typeof value.startedAt === "string" || value.startedAt === null) &&
+    (typeof value.finishedAt === "string" || value.finishedAt === null) &&
+    (value.result === null || isNewsResearchResponse(value.result)) &&
+    (value.error === null || isNewsResearchQueueError(value.error))
+  );
+}
+
+function isNewsResearchQueueJobStatus(value: unknown): value is NewsResearchQueueJobStatus {
+  return value === "queued" || value === "running" || value === "succeeded" || value === "failed";
+}
+
+function isNewsResearchQueueError(value: unknown): boolean {
+  return (
+    isUnknownRecord(value) &&
+    typeof value.error === "string" &&
+    typeof value.message === "string" &&
+    typeof value.requestId === "string" &&
+    typeof value.retryable === "boolean" &&
+    (!("article" in value) || value.article === undefined || isQueueArticle(value.article))
+  );
+}
+
+function isQueueArticle(value: unknown): boolean {
+  return (
+    isUnknownRecord(value) &&
+    typeof value.url === "string" &&
+    (typeof value.contentSha256 === "string" || value.contentSha256 === null) &&
+    (!("fetchedAt" in value) || typeof value.fetchedAt === "string" || value.fetchedAt === undefined) &&
+    typeof value.byteLength === "number" &&
+    (typeof value.error === "string" || value.error === null)
+  );
+}
+
+function isNewsResearchQueueSummary(value: unknown): value is NewsResearchQueueSummary {
+  return (
+    isUnknownRecord(value) &&
+    typeof value.queued === "number" &&
+    typeof value.running === "number" &&
+    typeof value.succeeded === "number" &&
+    typeof value.failed === "number" &&
+    typeof value.active === "number" &&
+    typeof value.total === "number" &&
+    typeof value.concurrency === "number" &&
+    typeof value.maxJobs === "number" &&
+    (value.storage === "memory" || value.storage === "file")
+  );
+}
+
+function isActiveQueueJob(job: NewsResearchQueueJob): boolean {
+  return job.status === "queued" || job.status === "running";
+}
+
 function normalizeResearchApiError(body: unknown, status: number): ResearchApiError {
   if (isUnknownRecord(body)) {
     const rawError = body.error;
@@ -865,6 +1284,8 @@ function messageForResearchErrorCode(code: string, status: number): string {
       return "Enter a news article URL before starting research.";
     case "article_url_invalid":
       return "Enter a valid HTTP or HTTPS news article URL.";
+    case "too_many_article_urls":
+      return "Queue fewer article URLs at once.";
     case "timeout":
       return "The article or agent request timed out. Please retry in a moment.";
     case "network_error":
@@ -961,6 +1382,37 @@ function formatHistoryDate(value: string): string {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
   return date.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+}
+
+function formatQueueDate(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+}
+
+function formatQueueStatus(status: NewsResearchQueueJobStatus): string {
+  if (status === "queued") return "Queued";
+  if (status === "running") return "Running";
+  if (status === "succeeded") return "Succeeded";
+  return "Failed";
+}
+
+function hostForUrl(value: string): string {
+  try {
+    return new URL(value).host;
+  } catch {
+    return "article";
+  }
+}
+
+function trimPreview(value: string): string {
+  const normalized = value
+    .replace(/^#{1,6}\s+/gm, "")
+    .replace(/[*_`]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (normalized.length <= 150) return normalized;
+  return `${normalized.slice(0, 147)}…`;
 }
 
 function isKnownMetadata(value: string | null | undefined): value is string {
