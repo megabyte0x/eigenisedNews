@@ -6,6 +6,7 @@ import { mnemonicToAccount, privateKeyToAccount } from "viem/accounts";
 import { fetchUrl } from "./fetchers/sourceFetcher";
 import { callModel, type CallErrorDebugInfo } from "./fanout/llmProxy";
 import { renderFrontendShell } from "./frontend/shell";
+import { mountPaidResearchApi, PAID_RESEARCH_PATH } from "./http/paidResearch";
 import { makeResearchHandler } from "./http/research";
 import { makeSynthesizeHandler } from "./http/synthesize";
 import type { ManifestSigner } from "./manifest/sign";
@@ -33,7 +34,7 @@ function readDeployment(fallbackAddress: `0x${string}`): Manifest["deployment"] 
 export function readDeploymentEnvironment(value: string | undefined): Manifest["deployment"]["environment"] {
   const normalized = value?.trim();
   if (!normalized) return "local";
-  if (normalized === "mainnet-alpha" || normalized === "local") return normalized;
+  if (normalized === "mainnet-alpha" || normalized === "sepolia" || normalized === "local") return normalized;
   throw new Error(`EIGEN_ENVIRONMENT invalid: ${value}`);
 }
 
@@ -91,7 +92,8 @@ function readCorsAllowOrigins(): string[] {
 function setCorsHeaders(res: express.Response, origin: string): void {
   res.setHeader("Access-Control-Allow-Origin", origin);
   res.setHeader("Access-Control-Allow-Methods", "POST,GET,OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "content-type");
+  res.setHeader("Access-Control-Allow-Headers", "content-type, payment-signature, x-payment, authorization");
+  res.setHeader("Access-Control-Expose-Headers", "WWW-Authenticate, Payment-Receipt, PAYMENT-REQUIRED, PAYMENT-RESPONSE");
   res.setHeader("Vary", "Origin");
 }
 
@@ -111,6 +113,7 @@ function assertRunSynthesisDeps(d: unknown): asserts d is RunSynthesisDeps {
 
 export function buildApp(depsOverride?: RunSynthesisDeps): Express {
   const app = express();
+  app.set("trust proxy", true);
   app.use((req, res, next) => {
     const requestOrigin = req.get("origin");
     if (!requestOrigin) return next();
@@ -119,7 +122,7 @@ export function buildApp(depsOverride?: RunSynthesisDeps): Express {
     if (!allowedOrigins.includes(requestOrigin)) return next();
 
     setCorsHeaders(res, requestOrigin);
-    if (req.method === "OPTIONS" && (req.path === "/synthesize" || req.path === "/research")) {
+    if (req.method === "OPTIONS" && isCorsPreflightPath(req.path)) {
       return res.status(204).end();
     }
 
@@ -141,10 +144,12 @@ export function buildApp(depsOverride?: RunSynthesisDeps): Express {
     assertRunSynthesisDeps(depsOverride);
     app.post("/research", makeResearchHandler(depsOverride));
     app.post("/synthesize", makeSynthesizeHandler(depsOverride));
+    mountPaidResearchApi(app, depsOverride);
   } else if (process.env.NODE_ENV !== "test") {
     const productionDeps = buildProductionDeps();
     app.post("/research", makeResearchHandler(productionDeps));
     app.post("/synthesize", makeSynthesizeHandler(productionDeps));
+    mountPaidResearchApi(app, productionDeps);
   }
   return app;
 }
@@ -161,4 +166,13 @@ function resolveStaticDir(): string | null {
   if (existsSync(distPath)) return distPath;
   const publicPath = join(process.cwd(), "public");
   return existsSync(publicPath) ? publicPath : null;
+}
+
+function isCorsPreflightPath(path: string): boolean {
+  return path === "/synthesize"
+    || path === "/research"
+    || path === PAID_RESEARCH_PATH
+    || path === "/openapi.json"
+    || path === "/.well-known/x402"
+    || path === "/verify";
 }

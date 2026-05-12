@@ -49,7 +49,7 @@ export type Manifest = {
     agentAddress: string;
     imageDigest: string;
     commitSha: string;
-    environment: "mainnet-alpha" | "local";
+    environment: "mainnet-alpha" | "sepolia" | "local";
   };
   request: { topic: string; requestHash: Sha256 };
   inputs: InputRecord[];

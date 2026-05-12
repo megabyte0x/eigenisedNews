@@ -6,7 +6,7 @@ eigenisedNews is built around one core user experience: take a single news artic
 
 The product fetches the article once, prepares one shared article context, asks a main agent to create a pro prompt and a contra prompt, then runs two perspective analyses over the same prepared input. The result is meant to be reader-first: a concise framing of the article plus arguments for and against its framing, with prompts and diagnostics preserved for inspection.
 
-The repository also includes a second, more operator-oriented workflow: multi-model synthesis with a signed manifest. That path is still part of the product, but it is not the default experience.
+The repository also exposes the same article-research workflow as a paid agent API at `POST /api/research`. That route is for autonomous clients that discover the service, pay with x402 or MPP, and receive the signed research response directly. A second, more operator-oriented workflow — multi-model synthesis with a signed manifest — is still part of the product, but it is not the default experience.
 
 ## Primary workflow: article research
 
@@ -83,6 +83,16 @@ The UI shows this in the **Perspective provenance** panel and exposes a signed r
 
 The synthesis console is still available through **Open synthesis console** in the UI.
 
+## Paid agent workflow
+
+Agents call `POST /api/research` with the same JSON body as `/research`:
+
+```json
+{ "articleUrl": "https://example.com/news/story" }
+```
+
+Unpaid requests return `402 Payment Required` with both x402 and MPP challenges. After payment, clients retry the same request and receive the normal signed research response. Agents can inspect `GET /openapi.json`, `GET /.well-known/x402`, `GET /verify`, and `GET /skill.md` before paying.
+
 ### What it is for
 
 This mode is aimed more at operators, auditors, and verifier-oriented workflows than everyday article reading. Instead of one article URL, it accepts:
@@ -95,13 +105,14 @@ It then runs the fixed model set, merges structured claims deterministically, an
 
 ### What makes it different from article research
 
-| Capability | `/research` | `/synthesize` |
-|---|---|---|
-| Primary audience | readers / analysts | operators / auditors |
-| Default UI mode | yes | no |
-| Input shape | one article URL | topic + URLs and/or pasted text |
-| Output shape | pro/con analyses | manifest + signature + optional raw outputs |
-| Verifier path | prompt/build provenance only | yes |
+| Capability | `/research` | `/api/research` | `/synthesize` |
+|---|---|---|---|
+| Primary audience | readers / analysts | autonomous paid agents | operators / auditors |
+| Default UI mode | yes | no | no |
+| Payment required | no | yes, x402 or MPP | no |
+| Input shape | one article URL | one article URL | topic + URLs and/or pasted text |
+| Output shape | pro/con analyses + signed research manifest | same as `/research` after payment | manifest + signature + optional raw outputs |
+| Verifier path | prompt/build provenance | prompt/build provenance; use `?include=raw` for audit evidence | yes |
 
 ## UI surfaces
 
@@ -116,6 +127,7 @@ The synthesis console is still part of the application, but it is presented as a
 ## Current constraints users should understand
 
 - Article research only accepts a single article URL per request.
+- Paid agent research is disabled unless payment environment variables are complete, or fails closed when `PAID_RESEARCH_ENABLED=true`.
 - The research path is not the same as the signed multi-model synthesis path.
 - The synthesis path omits raw model output by default; request `?include=raw` when strict verification matters.
 - The synthesis path can return a signed partial response with HTTP 503 when the minimum model-success threshold is not met.

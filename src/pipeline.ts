@@ -459,15 +459,20 @@ function buildResearchVerifiableBuild(deployment: Manifest["deployment"]): NewsR
     : deployment.agentAddress !== "unknown"
       ? deployment.agentAddress
       : null;
-  const hasVerifiableDashboard = deployment.environment === "mainnet-alpha" && appIdentifier !== null;
   const commitSha = deployment.commitSha.trim();
   const hasCommit = commitSha.length > 0 && commitSha !== "unknown";
   return {
     ...deployment,
-    dashboardUrl: hasVerifiableDashboard ? `https://verify.eigencloud.xyz/app/${appIdentifier}` : null,
+    dashboardUrl: appIdentifier ? dashboardUrlForEnvironment(deployment.environment, appIdentifier) : null,
     promptSourcePath: RESEARCH_PROMPT_SOURCE_PATH,
     promptSourceUrl: hasCommit ? `${SOURCE_REPOSITORY_URL}/blob/${commitSha}/${RESEARCH_PROMPT_SOURCE_PATH}` : null,
   };
+}
+
+function dashboardUrlForEnvironment(environment: Manifest["deployment"]["environment"], appIdentifier: string): string | null {
+  if (environment === "mainnet-alpha") return `https://verify.eigencloud.xyz/app/${appIdentifier}`;
+  if (environment === "sepolia") return `https://verify-sepolia.eigencloud.xyz/app/${appIdentifier}`;
+  return null;
 }
 
 async function callResearchAgent(

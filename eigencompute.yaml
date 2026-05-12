@@ -5,12 +5,27 @@ runtime:
   vcpu: 4
   memoryMiB: 8192
 endpoints:
+  - name: paid-research
+    method: POST
+    path: /api/research
   - name: research
     method: POST
     path: /research
   - name: synthesize
     method: POST
     path: /synthesize
+  - name: openapi
+    method: GET
+    path: /openapi.json
+  - name: x402-discovery
+    method: GET
+    path: /.well-known/x402
+  - name: verify
+    method: GET
+    path: /verify
+  - name: skill
+    method: GET
+    path: /skill.md
   - name: healthz
     method: GET
     path: /healthz

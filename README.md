@@ -9,6 +9,7 @@ Its primary workflow accepts one article URL, fetches that article once, prepare
 ## What the product does
 
 - **Primary mode: article research.** Submit one news article URL and get two evidence-backed perspectives on the same article: one supporting the framing and one challenging it.
+- **Paid agent API.** Agents can call the same research workflow through `POST /api/research`, pay per request with x402 or MPP via `dual402`, and discover the route through OpenAPI/x402 metadata.
 - **Secondary mode: signed synthesis.** Submit a topic plus URLs and/or pasted source text, fan the request out to the fixed model set, and receive a signed consensus manifest.
 - **Verifier support.** Saved `/synthesize` responses can be replayed and checked offline, with optional URL refetch and EigenCompute provenance evidence.
 
@@ -38,7 +39,38 @@ The response includes article metadata, the pro/contra prompts derived from the 
 
 When `FIRECRAWL_API_KEY` is configured, article fetching uses Firecrawl `/v2/scrape` first for clean markdown content. If Firecrawl is unavailable or returns no usable content, the fetcher falls back to the existing bounded direct HTTP request. Without `FIRECRAWL_API_KEY`, direct HTTP remains the only fetch path.
 
-### 2. Signed synthesis (`POST /synthesize`)
+### 2. Paid agent research (`POST /api/research`)
+
+`/api/research` runs the same signed research workflow as `/research`, but it is guarded by [`dual402`](https://www.npmjs.com/package/dual402) so autonomous agents can pay per call with either x402 (Base USDC) or MPP (Tempo USDC).
+
+```bash
+curl -i http://localhost:3000/api/research \
+  -H 'content-type: application/json' \
+  -d '{"articleUrl":"https://example.com/news/story"}'
+```
+
+The first unpaid request returns `402 Payment Required` with both `PAYMENT-REQUIRED` and `WWW-Authenticate` challenges. A compliant x402 or MPP client pays, then retries the same request body to receive the normal research response.
+
+Agent-facing support routes:
+
+- `GET /openapi.json` — OpenAPI 3.1 description with payment metadata.
+- `GET /.well-known/x402` — x402 resource discovery.
+- `GET /verify` — EigenCompute deployment, payee, facilitator, and discovery metadata without secrets.
+- `GET /skill.md` — external agent skill for setup and endpoint usage.
+
+Local/dev defaults keep the paid route in `auto` mode: it is mounted only when payment environment variables are complete. Set `PAID_RESEARCH_ENABLED=true` in production to fail closed if x402/MPP config is incomplete.
+
+Required payment env vars are documented in `.env.example`; the short list is:
+
+- `RECIPIENT_WALLET` or both `X402_PAYEE_ADDRESS` and `MPP_RECIPIENT`
+- `MPP_SECRET_KEY`
+- `USDC_TEMPO`
+- `X402_NETWORK`
+- `X402_FACILITATOR_URL`
+- `CDP_API_KEY_ID` and `CDP_API_KEY_SECRET` for Base mainnet with the CDP facilitator
+- `BASE_URL` when the service is behind a proxy or custom domain
+
+### 3. Signed synthesis (`POST /synthesize`)
 
 This is the secondary operator-facing flow. It accepts a topic plus URLs and/or pasted source text, runs the fixed model set, merges claims deterministically, and signs the resulting manifest.
 
@@ -74,7 +106,7 @@ When `FRONTEND_API_BASE_URL` is unset, the UI uses same-origin `/research` and `
 
 The `/synthesize` path is built for replayable verification. The app records request and input hashes, per-model prompt hashes and outcomes, deterministic merge results, deployment metadata, and a signature over the manifest hash. The standalone verifier can then check integrity, signature recovery, raw output consistency, merge replay, refetch drift, and optional EigenCompute provenance.
 
-The `/research` path now produces a signed research manifest. It records the article URL/content hash, main/pro/contra prompt hashes, output hashes, deterministic summary hash, deployment metadata, and a signature over the research manifest hash. With `?include=raw`, the verifier can also check the exact planner/pro/contra prompts and raw outputs.
+The `/research` and paid `/api/research` paths produce a signed research manifest. It records the article URL/content hash, main/pro/contra prompt hashes, output hashes, deterministic summary hash, deployment metadata, and a signature over the research manifest hash. With `?include=raw`, the verifier can also check the exact planner/pro/contra prompts and raw outputs.
 
 Use the verifier directly:
 

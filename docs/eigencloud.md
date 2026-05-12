@@ -37,8 +37,13 @@ Those values feed the signed manifest deployment section for `/synthesize` respo
 
 The deployment shape in this repo is declared in `eigencompute.yaml`:
 
+- `POST /api/research`
 - `POST /research`
 - `POST /synthesize`
+- `GET /openapi.json`
+- `GET /.well-known/x402`
+- `GET /verify`
+- `GET /skill.md`
 - `GET /healthz`
 
 and an app wallet binding:
@@ -52,9 +57,51 @@ Even though `GET /` is served by the application and used by smoke tests, it is 
 
 For EigenCompute environment selection, this repo follows the current live environment name:
 
+- `sepolia`
 - `mainnet-alpha`
 
-Use `mainnet-alpha` when following the repo’s live inference path.
+Use `sepolia` for payment-route and deployment rehearsals, then `mainnet-alpha` when following the repo’s live inference path.
+
+## Paid research API environment
+
+`POST /api/research` is the paid agent-facing variant of the article research route. It uses `dual402` and accepts either:
+
+- x402 on Base USDC
+- MPP on Tempo USDC
+
+Set `PAID_RESEARCH_ENABLED=true` in deployed environments so the app fails closed if payment config is missing. The payment env surface is:
+
+```bash
+PAID_RESEARCH_ENABLED=true
+PAID_RESEARCH_PRICE_USDC=0.05
+RECIPIENT_WALLET=0x...
+MPP_SECRET_KEY=<32-byte-random-hex>
+USDC_TEMPO=0x20C000000000000000000000b9537d11c60E8b50
+MPP_TESTNET=false
+X402_NETWORK=eip155:8453
+X402_FACILITATOR_URL=https://api.cdp.coinbase.com/platform/v2/x402
+CDP_API_KEY_ID=<cdp-key-id>
+CDP_API_KEY_SECRET=<cdp-key-secret>
+BASE_URL=https://<public-api-origin>
+SERVICE_NAME=eigenisedNews-paid-research
+SERVICE_VERSION=0.1.0
+```
+
+For sepolia/test rails, use:
+
+```bash
+USDC_TEMPO=0x20c0000000000000000000000000000000000000
+MPP_TESTNET=true
+X402_NETWORK=eip155:84532
+X402_FACILITATOR_URL=https://x402.org/facilitator
+```
+
+The support endpoints for agents are:
+
+- `GET /openapi.json`
+- `GET /.well-known/x402`
+- `GET /verify`
+- `GET /skill.md`
 
 ## Model gateway usage
 
@@ -127,7 +174,7 @@ This repo also includes a Vercel deployment shape in `vercel.json`.
 That config:
 
 - builds only `dist/public`
-- rewrites `/research`, `/synthesize`, and `/healthz` to a fixed remote backend IP
+- rewrites `/research`, `/api/research`, `/synthesize`, discovery routes, `/verify`, `/skill.md`, and `/healthz` to a fixed remote backend IP
 
 This is not a full EigenCompute deployment. It is a frontend-only publishing path that depends on an already-running backend.
 

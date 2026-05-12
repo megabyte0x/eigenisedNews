@@ -120,7 +120,9 @@ describe("POST /synthesize", () => {
       expect(res.status).toBe(204);
       expect(res.headers["access-control-allow-origin"]).toBe("http://localhost:5173");
       expect(res.headers["access-control-allow-methods"]).toBe("POST,GET,OPTIONS");
-      expect(res.headers["access-control-allow-headers"]).toBe("content-type");
+      expect(res.headers["access-control-allow-headers"]).toContain("content-type");
+      expect(res.headers["access-control-allow-headers"]).toContain("payment-signature");
+      expect(res.headers["access-control-expose-headers"]).toContain("PAYMENT-REQUIRED");
       expect(res.headers.vary).toBe("Origin");
     });
   });
@@ -135,7 +137,9 @@ describe("POST /synthesize", () => {
       expect(res.status).toBe(200);
       expect(res.headers["access-control-allow-origin"]).toBe("https://ui.example");
       expect(res.headers["access-control-allow-methods"]).toBe("POST,GET,OPTIONS");
-      expect(res.headers["access-control-allow-headers"]).toBe("content-type");
+      expect(res.headers["access-control-allow-headers"]).toContain("content-type");
+      expect(res.headers["access-control-allow-headers"]).toContain("payment-signature");
+      expect(res.headers["access-control-expose-headers"]).toContain("PAYMENT-RESPONSE");
       expect(res.headers.vary).toBe("Origin");
     });
   });

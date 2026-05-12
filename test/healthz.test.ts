@@ -37,6 +37,10 @@ describe("GET /healthz", () => {
     expect(readDeploymentEnvironment("mainnet-alpha")).toBe("mainnet-alpha");
   });
 
+  test("explicit sepolia wins for EigenCompute test deployments", () => {
+    expect(readDeploymentEnvironment("sepolia")).toBe("sepolia");
+  });
+
   test("local fallback stays local when no explicit env is present", () => {
     expect(readDeploymentEnvironment(undefined)).toBe("local");
     expect(readDeploymentEnvironment("   ")).toBe("local");

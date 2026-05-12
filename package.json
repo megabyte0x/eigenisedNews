@@ -22,6 +22,7 @@
     "@layr-labs/ai-gateway-provider": "^1.0.1",
     "@mendable/firecrawl-js": "^4.22.2",
     "ai": "^6.0.168",
+    "dual402": "^0.1.2",
     "express": "^5.2.1",
     "viem": "^2.48.4"
   },
@@ -39,5 +40,8 @@
     "tsx": "^4.21.0",
     "typescript": "^6.0.3",
     "vitest": "^4.1.5"
+  },
+  "overrides": {
+    "mppx": "0.6.14"
   }
 }

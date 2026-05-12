@@ -7,7 +7,9 @@ eigenisedNews is a single Express application that serves:
 - a browser UI at `GET /`
 - a health endpoint at `GET /healthz`
 - the primary article-research API at `POST /research`
+- the paid agent article-research API at `POST /api/research`
 - the secondary signed-synthesis API at `POST /synthesize`
+- agent discovery/audit endpoints at `GET /openapi.json`, `GET /.well-known/x402`, `GET /verify`, and `GET /skill.md`
 
 The app can run locally with a direct private key or inside EigenCompute with platform-injected deployment metadata and mnemonic-backed signing.
 
@@ -67,6 +69,17 @@ Failure responses are structured as `{ error, message, requestId, retryable }` p
 
 Success returns article metadata, prompts, perspective analyses, summary, prompt/build provenance, agent-run diagnostics, a signed research manifest, and optional raw audit data. `promptBindings` exposes the visible main/pro/contra system prompts plus system/full prompt hashes; `verifiableBuild` exposes deployment metadata and prompt source links.
 
+## `POST /api/research`
+
+Runs the same handler and signed research pipeline as `POST /research`, but first applies a `dual402` charge middleware. Unpaid calls return `402` with both x402 and MPP challenges; paid retries continue to the normal research response.
+
+Discovery and support endpoints:
+
+- `GET /openapi.json` for OpenAPI 3.1 route/payment metadata
+- `GET /.well-known/x402` for x402 resource discovery
+- `GET /verify` for deployment and public payment metadata
+- `GET /skill.md` for external agent setup instructions
+
 ## `POST /synthesize`
 
 Accepts a topic plus URL and/or text inputs.
@@ -80,7 +93,7 @@ The optional `?include=raw` query parameter determines whether raw model outputs
 
 ## CORS behavior
 
-CORS is intentionally narrow. When `CORS_ALLOW_ORIGINS` is configured, the server only sets CORS headers for allowed origins and only handles preflight for `/research` and `/synthesize`.
+CORS is intentionally narrow. When `CORS_ALLOW_ORIGINS` is configured, the server only sets CORS headers for allowed origins and only handles preflight for API/discovery routes. The allowed/exposed headers include x402/MPP payment headers so browser-based agents can read `PAYMENT-REQUIRED`, `WWW-Authenticate`, and `PAYMENT-RESPONSE`.
 
 ## Primary pipeline: `/research`
 
@@ -209,7 +222,7 @@ Important policy facts:
 
 ### Frontend-only deployment on Vercel
 
-`vercel.json` builds only the frontend output and rewrites browser requests to a fixed remote backend for `/research`, `/synthesize`, and `/healthz`.
+`vercel.json` builds only the frontend output and rewrites browser/API requests to a fixed remote backend for `/research`, `/api/research`, `/synthesize`, discovery routes, `/verify`, `/skill.md`, and `/healthz`.
 
 That means the repo supports a split topology:
 

@@ -12,8 +12,28 @@
       "destination": "http://35.204.200.15:3000/research"
     },
     {
+      "source": "/api/research",
+      "destination": "http://35.204.200.15:3000/api/research"
+    },
+    {
       "source": "/synthesize",
       "destination": "http://35.204.200.15:3000/synthesize"
+    },
+    {
+      "source": "/openapi.json",
+      "destination": "http://35.204.200.15:3000/openapi.json"
+    },
+    {
+      "source": "/.well-known/x402",
+      "destination": "http://35.204.200.15:3000/.well-known/x402"
+    },
+    {
+      "source": "/verify",
+      "destination": "http://35.204.200.15:3000/verify"
+    },
+    {
+      "source": "/skill.md",
+      "destination": "http://35.204.200.15:3000/skill.md"
     },
     {
       "source": "/healthz",
