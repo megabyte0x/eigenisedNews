@@ -100,7 +100,7 @@ export function isRawModelOutput(value: unknown): value is RawModelOutput {
 }
 
 function isDeploymentEnvironment(value: unknown): value is Manifest["deployment"]["environment"] {
-  return value === "mainnet-alpha" || value === "local";
+  return value === "mainnet-alpha" || value === "sepolia" || value === "local";
 }
 
 function isRequestRecord(value: unknown): value is Manifest["request"] {

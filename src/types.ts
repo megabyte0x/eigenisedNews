@@ -171,6 +171,52 @@ export type NewsResearchResponse = {
   raw: NewsResearchRaw | null;
 };
 
+export type NewsResearchQueueJobStatus = "queued" | "running" | "succeeded" | "failed";
+
+export type NewsResearchQueueError = {
+  error: string;
+  message: string;
+  requestId: string;
+  retryable: boolean;
+  article?: NewsResearchArticle;
+};
+
+export type NewsResearchQueueJob = {
+  id: string;
+  requestId: string;
+  articleUrl: string;
+  status: NewsResearchQueueJobStatus;
+  position: number | null;
+  createdAt: string;
+  updatedAt: string;
+  startedAt: string | null;
+  finishedAt: string | null;
+  result: NewsResearchResponse | null;
+  error: NewsResearchQueueError | null;
+};
+
+export type NewsResearchQueueSummary = {
+  queued: number;
+  running: number;
+  succeeded: number;
+  failed: number;
+  active: number;
+  total: number;
+  concurrency: number;
+  maxJobs: number;
+  storage: "memory" | "file";
+};
+
+export type NewsResearchQueueEnqueueResponse = {
+  jobs: NewsResearchQueueJob[];
+  queue: NewsResearchQueueSummary;
+};
+
+export type NewsResearchQueueListResponse = {
+  jobs: NewsResearchQueueJob[];
+  queue: NewsResearchQueueSummary;
+};
+
 export type StructuredModelOutput = {
   claims: StructuredClaim[];
   summary: string;

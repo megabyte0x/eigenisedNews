@@ -1,14 +1,22 @@
 import { describe, expect, test } from "vitest";
 import request from "supertest";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { privateKeyToAccount, generatePrivateKey } from "viem/accounts";
 import { buildApp } from "../src/index";
 import type { RunSynthesisDeps } from "../src/pipeline";
+import { ArticleResearchQueue } from "../src/http/researchQueue";
 
 const FIXED_TS = "2026-04-27T12:00:00.000Z";
 
 function makeApp(overrides: Partial<RunSynthesisDeps> = {}) {
+  return buildApp(makeDeps(overrides));
+}
+
+function makeDeps(overrides: Partial<RunSynthesisDeps> = {}): RunSynthesisDeps {
   const account = privateKeyToAccount(generatePrivateKey());
-  const deps: RunSynthesisDeps = {
+  return {
     fetchUrl: async (url) => ({
       kind: "url",
       url,
@@ -42,7 +50,6 @@ function makeApp(overrides: Partial<RunSynthesisDeps> = {}) {
     sign: (h) => account.signMessage({ message: h }),
     ...overrides,
   };
-  return buildApp(deps);
 }
 
 describe("POST /research", () => {
@@ -88,6 +95,108 @@ describe("POST /research", () => {
     expect(res.body.raw.agentOutputs[0].prompt).toContain("Create two research prompts");
     expect(res.body.raw.agentOutputs[0].rawOutput).toContain("proPrompt");
     expect(res.body.raw.mainSummary).toBe(res.body.mainSummary);
+  });
+
+  test("queues multiple article research jobs and exposes completed results", async () => {
+    const app = makeApp();
+    const enqueue = await request(app)
+      .post("/research/jobs")
+      .query({ include: "raw" })
+      .send({ articleUrls: ["https://news.example/one", "https://news.example/two"] });
+
+    expect(enqueue.status).toBe(202);
+    expect(enqueue.body.jobs).toHaveLength(2);
+    expect(enqueue.body.queue.active).toBe(2);
+    expect(enqueue.body.jobs.map((job: { articleUrl: string }) => job.articleUrl)).toEqual([
+      "https://news.example/one",
+      "https://news.example/two",
+    ]);
+
+    const first = await waitForQueuedJob(app, enqueue.body.jobs[0].id);
+    const second = await waitForQueuedJob(app, enqueue.body.jobs[1].id);
+
+    expect(first.status).toBe("succeeded");
+    expect(first.result.article.url).toBe("https://news.example/one");
+    expect(first.result.raw.agentOutputs).toHaveLength(3);
+    expect(second.status).toBe("succeeded");
+    expect(second.result.article.url).toBe("https://news.example/two");
+
+    const list = await request(app).get("/research/jobs");
+    expect(list.status).toBe(200);
+    expect(list.body.queue.succeeded).toBe(2);
+    expect(list.body.jobs.map((job: { status: string }) => job.status)).toEqual(["succeeded", "succeeded"]);
+  });
+
+  test("runs queued article jobs sequentially", async () => {
+    let releaseFirstFetch: (() => void) | null = null;
+    let activeFetches = 0;
+    let maxActiveFetches = 0;
+    const app = makeApp({
+      fetchUrl: async (url) => {
+        activeFetches++;
+        maxActiveFetches = Math.max(maxActiveFetches, activeFetches);
+        if (url.endsWith("/one")) {
+          await new Promise<void>((resolve) => {
+            releaseFirstFetch = resolve;
+          });
+        }
+        activeFetches--;
+        return {
+          kind: "url",
+          url,
+          contentSha256: "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+          text: "A queued news article about earnings and governance.",
+          fetchedAt: FIXED_TS,
+          byteLength: 55,
+          error: null,
+        };
+      },
+    });
+
+    const enqueue = await request(app)
+      .post("/research/jobs")
+      .send({ articleUrls: ["https://news.example/one", "https://news.example/two"] });
+
+    expect(enqueue.status).toBe(202);
+    const running = await waitForQueuedJobStatus(app, enqueue.body.jobs[0].id, "running");
+    const queued = await request(app).get(`/research/jobs/${enqueue.body.jobs[1].id}`);
+
+    expect(running.status).toBe("running");
+    expect(queued.body.status).toBe("queued");
+    expect(queued.body.position).toBe(1);
+    expect(maxActiveFetches).toBe(1);
+
+    const release = releaseFirstFetch as (() => void) | null;
+    if (!release) throw new Error("first queued fetch did not start");
+    release();
+    const first = await waitForQueuedJob(app, enqueue.body.jobs[0].id);
+    const second = await waitForQueuedJob(app, enqueue.body.jobs[1].id);
+    expect(first.status).toBe("succeeded");
+    expect(second.status).toBe("succeeded");
+    expect(maxActiveFetches).toBe(1);
+  });
+
+  test("persists queued article results when a store path is configured", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "eigenised-news-queue-"));
+    const storePath = join(dir, "research-queue.json");
+    try {
+      const deps = makeDeps();
+      const queue = new ArticleResearchQueue(deps, { storePath });
+      const [job] = queue.enqueueMany(["https://news.example/persisted"], true);
+
+      const completed = await waitForQueueJob(queue, job.id);
+      expect(completed.status).toBe("succeeded");
+      expect(completed.result?.raw?.agentOutputs).toHaveLength(3);
+
+      const persisted = JSON.parse(readFileSync(storePath, "utf8")) as { jobs: Array<{ id: string; status: string }> };
+      expect(persisted.jobs[0]).toMatchObject({ id: job.id, status: "succeeded" });
+
+      const restored = new ArticleResearchQueue(deps, { storePath });
+      expect(restored.find(job.id)?.status).toBe("succeeded");
+      expect(restored.summary().storage).toBe("file");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   test("returns a validation error for invalid article URLs", async () => {
@@ -172,3 +281,32 @@ describe("POST /research", () => {
     expect(prompts.every((prompt) => prompt.length < 14_000)).toBe(true);
   });
 });
+
+async function waitForQueuedJob(app: ReturnType<typeof makeApp>, jobId: string) {
+  for (let attempt = 0; attempt < 30; attempt++) {
+    const res = await request(app).get(`/research/jobs/${jobId}`);
+    expect(res.status).toBe(200);
+    if (res.body.status === "succeeded" || res.body.status === "failed") return res.body;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  throw new Error(`queued job ${jobId} did not finish`);
+}
+
+async function waitForQueuedJobStatus(app: ReturnType<typeof makeApp>, jobId: string, status: string) {
+  for (let attempt = 0; attempt < 30; attempt++) {
+    const res = await request(app).get(`/research/jobs/${jobId}`);
+    expect(res.status).toBe(200);
+    if (res.body.status === status) return res.body;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  throw new Error(`queued job ${jobId} did not reach ${status}`);
+}
+
+async function waitForQueueJob(queue: ArticleResearchQueue, jobId: string) {
+  for (let attempt = 0; attempt < 30; attempt++) {
+    const job = queue.find(jobId);
+    if (job?.status === "succeeded" || job?.status === "failed") return job;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  throw new Error(`queued job ${jobId} did not finish`);
+}

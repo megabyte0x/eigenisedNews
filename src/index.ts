@@ -8,6 +8,7 @@ import { callModel, type CallErrorDebugInfo } from "./fanout/llmProxy";
 import { renderFrontendShell } from "./frontend/shell";
 import { mountPaidResearchApi, PAID_RESEARCH_PATH } from "./http/paidResearch";
 import { makeResearchHandler } from "./http/research";
+import { mountResearchQueueApi, RESEARCH_QUEUE_PATH } from "./http/researchQueue";
 import { makeSynthesizeHandler } from "./http/synthesize";
 import type { ManifestSigner } from "./manifest/sign";
 import type { RunSynthesisDeps } from "./pipeline";
@@ -138,11 +139,13 @@ export function buildApp(depsOverride?: RunSynthesisDeps): Express {
   if (depsOverride !== undefined) {
     assertRunSynthesisDeps(depsOverride);
     app.post("/research", makeResearchHandler(depsOverride));
+    mountResearchQueueApi(app, depsOverride);
     app.post("/synthesize", makeSynthesizeHandler(depsOverride));
     mountPaidResearchApi(app, depsOverride);
   } else if (process.env.NODE_ENV !== "test") {
     const productionDeps = buildProductionDeps();
     app.post("/research", makeResearchHandler(productionDeps));
+    mountResearchQueueApi(app, productionDeps);
     app.post("/synthesize", makeSynthesizeHandler(productionDeps));
     mountPaidResearchApi(app, productionDeps);
   }
@@ -166,6 +169,8 @@ function resolveStaticDir(): string | null {
 function isCorsPreflightPath(path: string): boolean {
   return path === "/synthesize"
     || path === "/research"
+    || path === RESEARCH_QUEUE_PATH
+    || path.startsWith(`${RESEARCH_QUEUE_PATH}/`)
     || path === PAID_RESEARCH_PATH
     || path === "/openapi.json"
     || path === "/.well-known/x402"

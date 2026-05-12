@@ -8,7 +8,7 @@ import { runArticleResearch, type RunSynthesisDeps } from "../pipeline";
 import type { NewsResearchRequest, NewsResearchResponse } from "../types";
 import { shouldIncludeRaw } from "./query";
 
-type ResearchErrorBody = {
+export type ResearchErrorBody = {
   error: string;
   message: string;
   requestId: string;
@@ -99,17 +99,24 @@ function sendResearchError(
   requestId: string,
   article?: NewsResearchResponse["article"],
 ): void {
-  const body: ResearchErrorBody = {
+  res.status(status).json(buildResearchErrorBody(code, requestId, article));
+}
+
+export function buildResearchErrorBody(
+  code: string,
+  requestId: string,
+  article?: NewsResearchResponse["article"],
+): ResearchErrorBody {
+  return {
     error: code,
     message: messageForResearchError(code),
     requestId,
     retryable: isRetryableResearchError(code),
     ...(article ? { article } : {}),
   };
-  res.status(status).json(body);
 }
 
-function statusForResearchError(code: string): number {
+export function statusForResearchError(code: string): number {
   if (code === "timeout") return 504;
   if (code === "http_401" || code === "http_403") return 502;
   if (code === "http_404" || code === "http_410") return 502;
@@ -117,11 +124,11 @@ function statusForResearchError(code: string): number {
   return 502;
 }
 
-function isRetryableResearchError(code: string): boolean {
+export function isRetryableResearchError(code: string): boolean {
   return code === "timeout" || code === "network_error" || code === "research_agent_failed" || code.startsWith("http_5");
 }
 
-function messageForResearchError(code: string): string {
+export function messageForResearchError(code: string): string {
   switch (code) {
     case "body_required":
       return "Send a JSON body with an articleUrl field.";
@@ -129,6 +136,10 @@ function messageForResearchError(code: string): string {
       return "Enter a news article URL before starting research.";
     case "article_url_invalid":
       return "Enter a valid HTTP or HTTPS news article URL.";
+    case "too_many_article_urls":
+      return "Queue fewer article URLs at once.";
+    case "queue_job_not_found":
+      return "No queued research job exists for that ID.";
     case "timeout":
       return "The article or agent request timed out. Please retry in a moment.";
     case "network_error":

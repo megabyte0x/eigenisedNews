@@ -1,5 +1,5 @@
-import { useState, type ReactNode } from "react";
-import type { NewsResearchResponse } from "../types";
+import { useEffect, useState, type ReactNode } from "react";
+import type { NewsResearchQueueEnqueueResponse, NewsResearchQueueJob, NewsResearchResponse } from "../types";
 import { isUnknownRecord } from "../lib/guards";
 import { isNewsResearchResponse } from "../lib/manifestGuards";
 import { isHttpUrl } from "../lib/url";
@@ -13,9 +13,9 @@ type NewsResearchAppProps = {
 type ResearchStatus =
   | { kind: "idle" }
   | { kind: "client_error"; message: string }
-  | { kind: "loading" }
+  | { kind: "submitting" }
   | { kind: "api_error"; message: string; code: string | null; requestId: string | null; retryable: boolean | null }
-  | { kind: "success"; response: NewsResearchResponse };
+  | { kind: "success" };
 
 type ResearchApiError = {
   code: string | null;
@@ -34,40 +34,77 @@ const SURFACE = "surface-card";
 const inputClassName = "form-input";
 
 export function NewsResearchApp({ fetchImpl = fetch }: NewsResearchAppProps) {
-  const [articleUrl, setArticleUrl] = useState("");
+  const [articleUrlsInput, setArticleUrlsInput] = useState("");
   const [status, setStatus] = useState<ResearchStatus>({ kind: "idle" });
+  const [jobs, setJobs] = useState<NewsResearchQueueJob[]>([]);
+  const [selectedJobId, setSelectedJobId] = useState<string | null>(null);
+
+  const activeJobIds = jobs
+    .filter((job) => job.status === "queued" || job.status === "running")
+    .map((job) => job.id);
+  const activeJobIdsKey = activeJobIds.join("|");
+
+  useEffect(() => {
+    if (activeJobIdsKey.length === 0) return;
+
+    let cancelled = false;
+    async function pollQueueJobs() {
+      const ids = activeJobIdsKey.split("|").filter(Boolean);
+      const refreshedJobs = await Promise.all(ids.map((id) => fetchQueueJob(fetchImpl, id)));
+      if (cancelled) return;
+      setJobs((current) => mergeQueueJobs(current, refreshedJobs.filter((job): job is NewsResearchQueueJob => job !== null)));
+    }
+
+    void pollQueueJobs();
+    const timer = setInterval(() => {
+      void pollQueueJobs();
+    }, 1500);
+
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [activeJobIdsKey, fetchImpl]);
 
   async function onSubmit(event: SubmitEventLike) {
     event.preventDefault();
-    const trimmedArticleUrl = articleUrl.trim();
-    if (!isHttpUrl(trimmedArticleUrl)) {
-      setStatus({ kind: "client_error", message: "Enter a valid news article URL before researching." });
+    const articleUrls = parseArticleUrls(articleUrlsInput);
+    if (articleUrls.length === 0) {
+      setStatus({ kind: "client_error", message: "Enter at least one news article URL before queueing research." });
+      return;
+    }
+    const invalidUrl = articleUrls.find((url) => !isHttpUrl(url));
+    if (invalidUrl) {
+      setStatus({ kind: "client_error", message: `Enter valid HTTP or HTTPS news article URLs. Invalid: ${invalidUrl}` });
       return;
     }
 
-    setStatus({ kind: "loading" });
+    setStatus({ kind: "submitting" });
     try {
-      const res = await fetchImpl(resolveFrontendApiUrl("research", { includeRaw: true }), {
+      const res = await fetchImpl(resolveFrontendApiUrl("research/jobs", { includeRaw: true }), {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ articleUrl: trimmedArticleUrl }),
+        body: JSON.stringify({ articleUrls }),
       });
       const body = await readResponseJson(res);
       if (!res.ok) {
         setStatus({ kind: "api_error", ...normalizeResearchApiError(body, res.status) });
         return;
       }
-      if (!isNewsResearchResponse(body)) {
+      if (!isQueueEnqueueResponse(body)) {
         setStatus({
           kind: "api_error",
           code: "malformed_response",
-          message: "The research service returned an unexpected response shape.",
+          message: "The research queue returned an unexpected response shape.",
           requestId: null,
           retryable: false,
         });
         return;
       }
-      setStatus({ kind: "success", response: body });
+      setJobs((current) => mergeQueueJobs(current, body.jobs));
+      setSelectedJobId((current) => current ?? body.jobs[0]?.id ?? null);
+      setArticleUrlsInput("");
+      setStatus({ kind: "success" });
     } catch (error) {
       setStatus({
         kind: "api_error",
@@ -79,7 +116,11 @@ export function NewsResearchApp({ fetchImpl = fetch }: NewsResearchAppProps) {
     }
   }
 
-  const response = status.kind === "success" ? status.response : null;
+  const selectedJob = selectedJobId ? jobs.find((job) => job.id === selectedJobId) ?? null : null;
+  const latestSucceededJob = jobs.find((job) => job.status === "succeeded" && job.result) ?? null;
+  const displayJob = selectedJob?.result ? selectedJob : latestSucceededJob;
+  const response = displayJob?.result ?? null;
+  const hasActiveJobs = jobs.some((job) => job.status === "queued" || job.status === "running");
 
   return (
     <div className="app-shell">
@@ -95,7 +136,7 @@ export function NewsResearchApp({ fetchImpl = fetch }: NewsResearchAppProps) {
                 <span>Adversarial edition</span>
               </div>
               <p className="hero-copy">
-                Send one news URL. The main agent sets the assignment, then pro and contra correspondents file evidence-backed columns from the same source.
+                Paste one or many news URLs. The queue gives each article a docket while the main, pro, and contra correspondents work through them one at a time.
               </p>
             </div>
             <div className="hero-actions">
@@ -112,7 +153,7 @@ export function NewsResearchApp({ fetchImpl = fetch }: NewsResearchAppProps) {
                   </a>
                 </div>
                 <p className="hero-note">
-                  Front-page findings first, with prompts and agent runs preserved as the audit trail below the fold.
+                  Front-page findings first, with queue progress, prompts, and agent runs preserved as the audit trail below the fold.
                 </p>
               </div>
             </div>
@@ -124,19 +165,20 @@ export function NewsResearchApp({ fetchImpl = fetch }: NewsResearchAppProps) {
             <div className="surface-card__body">
               <div className="section-header">
                 <p className="section-kicker">Input</p>
-                <h2 className="section-title">Research a URL</h2>
-                <p className="section-description">Use a news article URL so both sides analyze the same source.</p>
+                <h2 className="section-title">Queue article URLs</h2>
+                <p className="section-description">Add one URL per line. Each article runs through the same verifiable pro/contra research workflow.</p>
               </div>
 
               <form className="form-stack" onSubmit={onSubmit}>
                 <label className="field-group">
-                  <span className="field-label">News article URL</span>
-                  <input
-                    aria-label="News article URL"
-                    className={inputClassName}
-                    onChange={(event) => setArticleUrl(event.target.value)}
-                    placeholder="https://example.com/news/story"
-                    value={articleUrl}
+                  <span className="field-label">News article URLs</span>
+                  <textarea
+                    aria-label="News article URLs"
+                    className={`${inputClassName} form-textarea`}
+                    onChange={(event) => setArticleUrlsInput(event.target.value)}
+                    placeholder={"https://example.com/news/story\nhttps://example.com/news/follow-up"}
+                    rows={5}
+                    value={articleUrlsInput}
                   />
                 </label>
 
@@ -150,18 +192,25 @@ export function NewsResearchApp({ fetchImpl = fetch }: NewsResearchAppProps) {
                   </div>
                 ) : null}
 
-                {status.kind === "loading" ? (
+                {status.kind === "submitting" ? (
                   <p aria-live="polite" className="status-copy">
-                    Research in progress. Results and diagnostics will appear below.
+                    Adding article research jobs to the queue…
+                  </p>
+                ) : null}
+                {hasActiveJobs ? (
+                  <p aria-live="polite" className="status-copy">
+                    {activeJobIds.length} queued or running job{activeJobIds.length === 1 ? "" : "s"}. Completed results will appear in the docket list.
                   </p>
                 ) : null}
 
-                <button className="button-primary" disabled={status.kind === "loading"} type="submit">
-                  {status.kind === "loading" ? "Researching…" : "Research both sides"}
+                <button className="button-primary" disabled={status.kind === "submitting"} type="submit">
+                  {status.kind === "submitting" ? "Queueing…" : "Queue research"}
                 </button>
 
-                <ResearchFlow status={status.kind} />
+                <ResearchFlow status={status.kind} hasActiveJobs={hasActiveJobs} />
               </form>
+
+              <ResearchQueuePanel jobs={jobs} selectedJobId={displayJob?.id ?? selectedJobId} onSelect={setSelectedJobId} />
             </div>
           </section>
 
@@ -170,7 +219,7 @@ export function NewsResearchApp({ fetchImpl = fetch }: NewsResearchAppProps) {
               <div className="section-header">
                 <p className="section-kicker">Results</p>
                 <h2 className="section-title">For and against</h2>
-                <p className="section-description">Perspective-agent output from the same article context, styled for reading before diagnostics.</p>
+                <p className="section-description">Select a completed queue item to read the perspective-agent output from the same article context.</p>
               </div>
 
               {response ? (
@@ -214,7 +263,7 @@ export function NewsResearchApp({ fetchImpl = fetch }: NewsResearchAppProps) {
                   </details>
                 </div>
               ) : (
-                <div className="empty-state">No article research yet. Submit a URL to generate both perspectives.</div>
+                <div className="empty-state">No completed article research yet. Queue one or more URLs to generate both perspectives.</div>
               )}
             </div>
           </section>
@@ -224,15 +273,15 @@ export function NewsResearchApp({ fetchImpl = fetch }: NewsResearchAppProps) {
   );
 }
 
-function ResearchFlow({ status }: { status: ResearchStatus["kind"] }) {
-  const active = status === "loading";
+function ResearchFlow({ status, hasActiveJobs }: { status: ResearchStatus["kind"]; hasActiveJobs: boolean }) {
+  const active = status === "submitting" || hasActiveJobs;
   const done = status === "success";
   const attention = status === "client_error" || status === "api_error";
   const steps = [
-    ["01", "Lock one source"],
-    ["02", "Split two prompts"],
+    ["01", "Queue URL"],
+    ["02", "Fetch source"],
     ["03", "Compare lenses"],
-    ["04", "Bind provenance"],
+    ["04", "Bind proof"],
   ] as const;
   return (
     <ol className={`flow-rail ${active ? "flow-rail--active" : ""} ${done ? "flow-rail--done" : ""} ${attention ? "flow-rail--attention" : ""}`}>
@@ -244,6 +293,67 @@ function ResearchFlow({ status }: { status: ResearchStatus["kind"] }) {
       ))}
     </ol>
   );
+}
+
+function ResearchQueuePanel({
+  jobs,
+  selectedJobId,
+  onSelect,
+}: {
+  jobs: NewsResearchQueueJob[];
+  selectedJobId: string | null;
+  onSelect: (jobId: string) => void;
+}) {
+  if (jobs.length === 0) {
+    return (
+      <div className="queue-panel queue-panel--empty" aria-label="Article research queue">
+        Queue multiple article URLs and keep this page open while each job runs.
+      </div>
+    );
+  }
+
+  return (
+    <section className="queue-panel" aria-label="Article research queue">
+      <div className="queue-panel__header">
+        <p className="section-kicker">Queue</p>
+        <p className="queue-panel__summary">
+          {jobs.filter((job) => job.status === "queued" || job.status === "running").length} active · {jobs.filter((job) => job.status === "succeeded").length} complete
+        </p>
+      </div>
+      <ol className="queue-list">
+        {jobs.map((job) => (
+          <li className={`queue-item ${selectedJobId === job.id ? "queue-item--selected" : ""}`} key={job.id}>
+            <div className="queue-item__main">
+              <QueueStatusBadge job={job} />
+              <span className="queue-item__url" title={job.articleUrl}>{job.articleUrl}</span>
+            </div>
+            {job.error ? <p className="queue-item__error">{job.error.message}</p> : null}
+            <div className="queue-item__meta">
+              <span>Request <code>{job.requestId.slice(0, 8)}</code></span>
+              {job.finishedAt ? <span>Finished {formatTime(job.finishedAt)}</span> : job.startedAt ? <span>Started {formatTime(job.startedAt)}</span> : <span>Queued {formatTime(job.createdAt)}</span>}
+              {job.status === "succeeded" && job.result ? (
+                <button className="queue-item__select" onClick={() => onSelect(job.id)} type="button">
+                  {selectedJobId === job.id ? "Viewing result" : "View result"}
+                </button>
+              ) : null}
+            </div>
+          </li>
+        ))}
+      </ol>
+    </section>
+  );
+}
+
+function QueueStatusBadge({ job }: { job: NewsResearchQueueJob }) {
+  const label = job.status === "queued" && job.position ? `Queued #${job.position}` : labelForQueueStatus(job.status);
+  return <span className={`queue-status queue-status--${job.status}`}>{label}</span>;
+}
+
+function labelForQueueStatus(status: NewsResearchQueueJob["status"]): string {
+  if (status === "running") return "Running";
+  if (status === "succeeded") return "Complete";
+  if (status === "failed") return "Failed";
+  return "Queued";
 }
 
 function ResultDocket({ response }: { response: NewsResearchResponse }) {
@@ -496,6 +606,10 @@ function messageForResearchErrorCode(code: string, status: number): string {
       return "Enter a news article URL before starting research.";
     case "article_url_invalid":
       return "Enter a valid HTTP or HTTPS news article URL.";
+    case "too_many_article_urls":
+      return "Queue fewer article URLs at once.";
+    case "queue_job_not_found":
+      return "The queued research job could not be found. It may have expired from the server queue.";
     case "timeout":
       return "The article or agent request timed out. Please retry in a moment.";
     case "network_error":
@@ -508,6 +622,75 @@ function messageForResearchErrorCode(code: string, status: number): string {
       if (code.startsWith("http_")) return `The article request failed upstream (${code}).`;
       return `The research request failed with HTTP ${status}.`;
   }
+}
+
+function parseArticleUrls(value: string): string[] {
+  return value
+    .split(/[\n\r]+/)
+    .map((url) => url.trim())
+    .filter((url) => url.length > 0);
+}
+
+async function fetchQueueJob(fetchImpl: FetchLike, jobId: string): Promise<NewsResearchQueueJob | null> {
+  try {
+    const res = await fetchImpl(resolveFrontendApiUrl(`research/jobs/${encodeURIComponent(jobId)}`));
+    if (!res.ok) return null;
+    const body = await readResponseJson(res);
+    return isResearchQueueJob(body) ? body : null;
+  } catch {
+    return null;
+  }
+}
+
+function mergeQueueJobs(current: NewsResearchQueueJob[], incoming: NewsResearchQueueJob[]): NewsResearchQueueJob[] {
+  if (incoming.length === 0) return current;
+  const byId = new Map(current.map((job) => [job.id, job]));
+  for (const job of incoming) byId.set(job.id, job);
+  return Array.from(byId.values()).sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+}
+
+function isQueueEnqueueResponse(value: unknown): value is NewsResearchQueueEnqueueResponse {
+  return (
+    isUnknownRecord(value) &&
+    Array.isArray(value.jobs) &&
+    value.jobs.every(isResearchQueueJob) &&
+    isUnknownRecord(value.queue) &&
+    typeof value.queue.total === "number" &&
+    typeof value.queue.active === "number"
+  );
+}
+
+function isResearchQueueJob(value: unknown): value is NewsResearchQueueJob {
+  return (
+    isUnknownRecord(value) &&
+    typeof value.id === "string" &&
+    typeof value.requestId === "string" &&
+    typeof value.articleUrl === "string" &&
+    (value.status === "queued" || value.status === "running" || value.status === "succeeded" || value.status === "failed") &&
+    (typeof value.position === "number" || value.position === null) &&
+    typeof value.createdAt === "string" &&
+    typeof value.updatedAt === "string" &&
+    (typeof value.startedAt === "string" || value.startedAt === null) &&
+    (typeof value.finishedAt === "string" || value.finishedAt === null) &&
+    (value.result === null || isNewsResearchResponse(value.result)) &&
+    (value.error === null || isResearchQueueError(value.error))
+  );
+}
+
+function isResearchQueueError(value: unknown): boolean {
+  return (
+    isUnknownRecord(value) &&
+    typeof value.error === "string" &&
+    typeof value.message === "string" &&
+    typeof value.requestId === "string" &&
+    typeof value.retryable === "boolean"
+  );
+}
+
+function formatTime(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 }
 
 function formatReadingBlocks(text: string): FormattedBlock[] {

@@ -23,7 +23,7 @@ Read the deeper docs here:
 
 ## Product surfaces
 
-### 1. Article research (`POST /research`)
+### 1. Article research (`POST /research`, `POST /research/jobs`)
 
 This is the default UI and the main product story.
 
@@ -38,6 +38,18 @@ The response includes article metadata, the pro/contra prompts derived from the 
 `/research` responses are signed and verifier-compatible. Raw audit payloads are omitted by default; request `?include=raw` when you want the planner/pro/contra raw outputs and exact prompts included for strict replay checks.
 
 When `FIRECRAWL_API_KEY` is configured, article fetching uses Firecrawl `/v2/scrape` first for clean markdown content. If Firecrawl is unavailable or returns no usable content, the fetcher falls back to the existing bounded direct HTTP request. Without `FIRECRAWL_API_KEY`, direct HTTP remains the only fetch path.
+
+For the browser UI and batch submissions, use the queue API. Jobs run with concurrency `1` by default so long research calls provide immediate feedback without racing the Eigen gateway path:
+
+```bash
+curl http://localhost:3000/research/jobs?include=raw \
+  -H 'content-type: application/json' \
+  -d '{"articleUrls":["https://example.com/news/story","https://example.com/news/second"]}'
+
+curl http://localhost:3000/research/jobs/<job-id>
+```
+
+Set `RESEARCH_QUEUE_STORE_PATH` to persist queue state to a JSON file. On EigenCompute, point it at the persistent storage mount you provision for the app; if unset, the queue is in-memory only.
 
 ### 2. Paid agent research (`POST /api/research`)
 
@@ -161,7 +173,7 @@ What is still out of scope:
 
 - on-chain commit of `manifestSha256`
 - scheduled / cron synthesis
-- persistent storage / history
+- long-term user history beyond the bounded research queue
 - streaming responses
 - EIP-712 typed-data signatures
 - request authentication / rate limiting

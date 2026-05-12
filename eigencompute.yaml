@@ -11,6 +11,12 @@ endpoints:
   - name: research
     method: POST
     path: /research
+  - name: research-queue
+    method: POST
+    path: /research/jobs
+  - name: research-queue-list
+    method: GET
+    path: /research/jobs
   - name: synthesize
     method: POST
     path: /synthesize
