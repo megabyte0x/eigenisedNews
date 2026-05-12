@@ -12,6 +12,10 @@
       "destination": "http://35.204.200.15:3000/research"
     },
     {
+      "source": "/research/:path*",
+      "destination": "http://35.204.200.15:3000/research/:path*"
+    },
+    {
       "source": "/api/research",
       "destination": "http://35.204.200.15:3000/api/research"
     },

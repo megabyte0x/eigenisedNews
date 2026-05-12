@@ -202,7 +202,7 @@ This repo also includes a Vercel deployment shape in `vercel.json`.
 That config:
 
 - builds only `dist/public`
-- rewrites `/research`, `/api/research`, `/synthesize`, discovery routes, `/verify`, `/skill.md`, and `/healthz` to a fixed remote backend IP
+- rewrites `/research` plus nested `/research/*` endpoints, `/api/research`, `/synthesize`, discovery routes, `/verify`, `/skill.md`, and `/healthz` to a fixed remote backend IP
 
 This is not a full EigenCompute deployment. It is a frontend-only publishing path that depends on an already-running backend.
 

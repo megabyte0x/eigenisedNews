@@ -230,7 +230,7 @@ Important policy facts:
 
 ### Frontend-only deployment on Vercel
 
-`vercel.json` builds only the frontend output and rewrites browser/API requests to a fixed remote backend for `/research`, `/api/research`, `/synthesize`, discovery routes, `/verify`, `/skill.md`, and `/healthz`.
+`vercel.json` builds only the frontend output and rewrites browser/API requests to a fixed remote backend for `/research` plus nested `/research/*` endpoints, `/api/research`, `/synthesize`, discovery routes, `/verify`, `/skill.md`, and `/healthz`.
 
 That means the repo supports a split topology:
 
