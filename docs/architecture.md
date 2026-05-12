@@ -72,7 +72,7 @@ Success returns article metadata, prompts, perspective analyses, a main-agent co
 
 Successful `/research` and paid `/api/research` reports are saved through `src/storage/researchStore.ts`. The store keys reports by a normalized submitted article URL (lowercase host, no fragment, sorted query params) so duplicate links return the persisted report without rerunning fetch/model stages. History routes return a lightweight index and full report detail; the `?include=raw` query controls whether stored raw prompts/outputs are returned.
 
-Queued batch research is exposed at `POST /research/jobs`, `GET /research/jobs`, and `GET /research/jobs/:jobId`. Queue concurrency defaults to `1` to preserve the sequential Eigen gateway/JWT constraint, can persist job state with `RESEARCH_QUEUE_STORE_PATH`, and saves successful results to the same persistent report store when available.
+Incremental queued research is exposed at `POST /research/jobs`, `GET /research/jobs`, and `GET /research/jobs/:jobId`. The first-class request body is `{ "articleUrl": "https://..." }`, so users can add another article while the main panel is still researching. The legacy `articleUrls` array is still accepted for compatibility. Queue concurrency defaults to `1` to preserve the sequential Eigen gateway/JWT constraint, can persist job state with `RESEARCH_QUEUE_STORE_PATH`, and saves successful results to the same persistent report store when available.
 
 ## `POST /api/research`
 
@@ -83,7 +83,7 @@ Discovery and support endpoints:
 - `GET /openapi.json` for OpenAPI 3.1 route/payment metadata
 - `GET /.well-known/x402` for x402 resource discovery
 - `GET /verify` for deployment and public payment metadata
-- `POST/GET /research/jobs` and `GET /research/jobs/:jobId` for queued batch research
+- `POST/GET /research/jobs` and `GET /research/jobs/:jobId` for incremental queued research
 - `GET /research/history` and `GET /research/history/:id` for persisted report list/detail
 - `GET /skill.md` for external agent setup instructions
 

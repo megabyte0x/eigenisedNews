@@ -19,6 +19,18 @@ export function resolveFrontendApiUrl(endpoint: string, opts: { includeRaw?: boo
   }
 }
 
+export function resolveFrontendHostedUrl(endpoint: string): string {
+  const apiUrl = resolveFrontendApiUrl(endpoint);
+  if (/^https?:\/\//i.test(apiUrl)) return apiUrl;
+  if (typeof window === "undefined" || !window.location?.origin) return apiUrl;
+
+  try {
+    return new URL(apiUrl, window.location.origin).toString();
+  } catch {
+    return apiUrl;
+  }
+}
+
 function readFrontendRuntimeConfig(): FrontendRuntimeConfig {
   if (typeof document === "undefined") return {};
 

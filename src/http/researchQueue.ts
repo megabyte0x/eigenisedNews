@@ -67,6 +67,10 @@ export class ArticleResearchQueue {
     if (this.jobs.some((job) => job.status === "queued")) this.schedulePump();
   }
 
+  enqueue(articleUrl: string, includeRaw: boolean): NewsResearchQueueJob {
+    return this.enqueueMany([articleUrl], includeRaw)[0];
+  }
+
   enqueueMany(articleUrls: string[], includeRaw: boolean): NewsResearchQueueJob[] {
     const now = this.deps.now();
     const jobs = articleUrls.map((articleUrl): InternalResearchJob => ({
@@ -323,7 +327,10 @@ export function mountResearchQueueApi(app: Express, deps: RunSynthesisDeps, opti
       return;
     }
 
-    const jobs = queue.enqueueMany(parsed.articleUrls, shouldIncludeRaw(req));
+    const includeRaw = shouldIncludeRaw(req);
+    const jobs = parsed.articleUrls.length === 1
+      ? [queue.enqueue(parsed.articleUrls[0], includeRaw)]
+      : queue.enqueueMany(parsed.articleUrls, includeRaw);
     log("info", "research_queue_jobs_enqueued", {
       route: RESEARCH_QUEUE_PATH,
       jobCount: jobs.length,

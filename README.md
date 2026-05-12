@@ -39,17 +39,17 @@ The response includes article metadata, the pro/contra prompts derived from the 
 
 Successful research reports are persisted server-side. On EigenCompute the store uses the platform persistent data mount (`USER_PERSISTENT_DATA_PATH`, normally `/mnt/disks/userdata`) under `eigenised-news/research-reports`; local development falls back to `.data/eigenised-news/research-reports` unless `RESEARCH_STORAGE_DIR` is set. Duplicate article links are normalized and reuse the saved report instead of rerunning the agents.
 
-For batch submissions, use the queue API. Jobs run with concurrency `1` by default so long research calls provide immediate feedback without racing the Eigen gateway path:
+For background submissions, use the queue API one article at a time. This lets the browser keep one report in progress while the user pastes another URL and adds it to the side queue; completed jobs stay clickable in the queue rail and open in the main results pane. Jobs run with concurrency `1` by default so long research calls provide immediate feedback without racing the Eigen gateway path:
 
 ```bash
 curl http://localhost:3000/research/jobs?include=raw \
   -H 'content-type: application/json' \
-  -d '{"articleUrls":["https://example.com/news/story","https://example.com/news/second"]}'
+  -d '{"articleUrl":"https://example.com/news/second"}'
 
 curl http://localhost:3000/research/jobs/<job-id>
 ```
 
-Set `RESEARCH_QUEUE_STORE_PATH` to persist queue state to a JSON file. Successful queued reports are also saved to the normal persistent research history when the report store is available.
+The API still accepts `articleUrls` for compatibility, but the product UI is optimized for incremental single-article enqueueing. Set `RESEARCH_QUEUE_STORE_PATH` to persist queue state to a JSON file. Successful queued reports are also saved to the normal persistent research history when the report store is available.
 
 When `FIRECRAWL_API_KEY` is configured, article fetching uses Firecrawl `/v2/scrape` first for clean markdown content. If Firecrawl is unavailable or returns no usable content, the fetcher falls back to the existing bounded direct HTTP request. Without `FIRECRAWL_API_KEY`, direct HTTP remains the only fetch path.
 
@@ -70,7 +70,7 @@ Agent-facing support routes:
 - `GET /openapi.json` — OpenAPI 3.1 description with payment metadata.
 - `GET /.well-known/x402` — x402 resource discovery.
 - `GET /verify` — user-readable verification guide plus EigenCompute deployment, payee, facilitator, and discovery metadata without secrets.
-- `POST/GET /research/jobs` and `GET /research/jobs/{id}` — queued batch article research.
+- `POST/GET /research/jobs` and `GET /research/jobs/{id}` — incremental queued article research.
 - `GET /research/history` and `GET /research/history/{id}` — persistent saved research report index/detail for browser history and duplicate reuse.
 - `GET /skill.md` — external agent skill for setup and endpoint usage.
 

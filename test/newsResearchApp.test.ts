@@ -78,6 +78,27 @@ function makeResearchResponse(articleUrl: string, mainSummary = "Queued summary 
 }
 
 describe("NewsResearchApp", () => {
+  test("shows a For Agents header tab with a hosted skill prompt", async () => {
+    document.body.innerHTML = '<script id="frontend-runtime-config" type="application/json">{"apiBaseUrl":"https://api.example"}</script>';
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse(historyResponse()));
+
+    render(React.createElement(NewsResearchApp, { fetchImpl }));
+
+    const forAgentsTab = screen.getByRole("tab", { name: /for agents/i });
+    fireEvent.click(forAgentsTab);
+
+    expect(forAgentsTab).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByText(/Agent handoff/i)).toBeInTheDocument();
+    const prompt = screen.getByText(/Use the following skill/);
+    expect(prompt.textContent).toContain("https://api.example/skill.md");
+    expect(prompt.textContent).toContain("<ARTICLE_URL>");
+    expect(screen.getByRole("link", { name: /open hosted skill/i })).toHaveAttribute("href", "https://api.example/skill.md");
+
+    fireEvent.change(screen.getByLabelText(/news article url/i), { target: { value: "https://news.example/story" } });
+
+    expect(screen.getByText(/Use the following skill/).textContent).toContain("https://news.example/story");
+  });
+
   test("renders the URL-first research flow", async () => {
     const researchResponse = {
           article: { url: "https://news.example/story", contentSha256: "sha256:article", fetchedAt: "2026-05-07T00:00:00.000Z", byteLength: 1200, error: null },
@@ -362,22 +383,24 @@ describe("NewsResearchApp", () => {
     expect(screen.getByText(/retryable/i)).toBeInTheDocument();
   });
 
-  test("exposes queued batch research and opens completed queue results", async () => {
+  test("queues another article from the URL input while research is in progress and opens the side result", async () => {
+    let releasePrimaryResearch: (() => void) | null = null;
+    const emptyQueueResponse = {
+      jobs: [],
+      queue: {
+        queued: 0,
+        running: 0,
+        succeeded: 0,
+        failed: 0,
+        active: 0,
+        total: 0,
+        concurrency: 1,
+        maxJobs: 100,
+        storage: "memory",
+      },
+    };
     const queuedResponse = {
       jobs: [
-        {
-          id: "job-one",
-          requestId: "req-one",
-          articleUrl: "https://news.example/one",
-          status: "queued",
-          position: 1,
-          createdAt: "2026-05-07T00:00:00.000Z",
-          updatedAt: "2026-05-07T00:00:00.000Z",
-          startedAt: null,
-          finishedAt: null,
-          result: null,
-          error: null,
-        },
         {
           id: "job-two",
           requestId: "req-two",
@@ -393,31 +416,40 @@ describe("NewsResearchApp", () => {
         },
       ],
       queue: {
-        queued: 1,
+        queued: 0,
         running: 0,
         succeeded: 1,
         failed: 0,
-        active: 1,
-        total: 2,
+        active: 0,
+        total: 1,
         concurrency: 1,
         maxJobs: 100,
         storage: "memory",
       },
     };
-    const fetchImpl = vi.fn<typeof fetch>().mockImplementation(async (input) => {
+    const primaryResponse = makeResearchResponse("https://news.example/one", "Primary article one eventually finished.");
+    const fetchImpl = vi.fn<typeof fetch>().mockImplementation(async (input, init) => {
       const url = String(input);
       if (url.includes("/research/history")) return jsonResponse(historyResponse());
-      if (url.includes("/research/jobs")) return jsonResponse(queuedResponse, url.includes("include=raw") ? 202 : 200);
+      if (url.includes("/research/jobs") && init && "method" in init && init.method === "POST") return jsonResponse(queuedResponse, 202);
+      if (url.includes("/research/jobs")) return jsonResponse(emptyQueueResponse);
+      if (url.includes("/research")) {
+        await new Promise<void>((resolve) => {
+          releasePrimaryResearch = resolve;
+        });
+        return jsonResponse(primaryResponse);
+      }
       return jsonResponse({ error: "unexpected_url", message: url }, 500);
     });
 
     render(React.createElement(NewsResearchApp, { fetchImpl }));
 
-    fireEvent.click(screen.getByRole("button", { name: /queue batch/i }));
-    fireEvent.change(screen.getByLabelText(/article urls/i), {
-      target: { value: "https://news.example/one\nhttps://news.example/two" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: /queue article research/i }));
+    fireEvent.change(screen.getByLabelText(/news article url/i), { target: { value: "https://news.example/one" } });
+    fireEvent.click(screen.getByRole("button", { name: /research both sides/i }));
+    expect(await screen.findByText(/paste another URL and add it to the queue/i)).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText(/news article url/i), { target: { value: "https://news.example/two" } });
+    fireEvent.click(screen.getByRole("button", { name: /add to side queue/i }));
 
     await waitFor(() => {
       expect(fetchImpl).toHaveBeenCalledWith(
@@ -425,19 +457,26 @@ describe("NewsResearchApp", () => {
         expect.objectContaining({
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ articleUrls: ["https://news.example/one", "https://news.example/two"] }),
+          body: JSON.stringify({ articleUrl: "https://news.example/two" }),
         })
       );
     });
-    expect(await screen.findByText(/Queued 2 article research jobs/i)).toBeInTheDocument();
-    expect(screen.getByText(/1 active/i)).toBeInTheDocument();
-    expect(screen.getByText(/Position 1/i)).toBeInTheDocument();
+    expect(await screen.findByText(/Queued news\.example/i)).toBeInTheDocument();
+    expect(screen.getAllByText(/Side queue/i)).not.toHaveLength(0);
     expect(screen.getByText(/Queued summary ready for article two/i)).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: /open result/i }));
+    fireEvent.click(screen.getByText(/Queued summary ready for article two/i));
 
     expect(screen.getByText(/Where the pro and contra takes meet/i)).toBeInTheDocument();
     expect(screen.getAllByText(/Queued summary ready for article two/i)).not.toHaveLength(0);
+
+    const release = releasePrimaryResearch as (() => void) | null;
+    if (!release) throw new Error("primary research did not start");
+    release();
+    await waitFor(() => {
+      expect(screen.getAllByText(/Queued summary ready for article two/i)).not.toHaveLength(0);
+    });
+    expect(screen.queryByText(/Primary article one eventually finished/i)).not.toBeInTheDocument();
   });
 
   test("renders markdown emphasis in research output instead of raw markers", async () => {

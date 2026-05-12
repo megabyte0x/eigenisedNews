@@ -182,6 +182,64 @@ describe("POST /research", () => {
     expect(maxActiveFetches).toBe(1);
   });
 
+  test("accepts separately queued article jobs while another job is running", async () => {
+    let releaseFirstFetch: (() => void) | null = null;
+    const app = makeApp({
+      fetchUrl: async (url) => {
+        if (url.endsWith("/one")) {
+          await new Promise<void>((resolve) => {
+            releaseFirstFetch = resolve;
+          });
+        }
+        return {
+          kind: "url",
+          url,
+          contentSha256: "sha256:4444444444444444444444444444444444444444444444444444444444444444",
+          text: "A separately queued article about earnings and governance.",
+          fetchedAt: FIXED_TS,
+          byteLength: 64,
+          error: null,
+        };
+      },
+    });
+
+    const firstEnqueue = await request(app)
+      .post("/research/jobs")
+      .query({ include: "raw" })
+      .send({ articleUrl: "https://news.example/one" });
+
+    expect(firstEnqueue.status).toBe(202);
+    expect(firstEnqueue.body.jobs).toHaveLength(1);
+    expect(firstEnqueue.body.jobs[0].articleUrl).toBe("https://news.example/one");
+
+    const running = await waitForQueuedJobStatus(app, firstEnqueue.body.jobs[0].id, "running");
+    expect(running.status).toBe("running");
+
+    const secondEnqueue = await request(app)
+      .post("/research/jobs")
+      .query({ include: "raw" })
+      .send({ articleUrl: "https://news.example/two" });
+
+    expect(secondEnqueue.status).toBe(202);
+    expect(secondEnqueue.body.jobs).toHaveLength(1);
+    expect(secondEnqueue.body.jobs[0].articleUrl).toBe("https://news.example/two");
+    expect(secondEnqueue.body.jobs[0].status).toBe("queued");
+    expect(secondEnqueue.body.jobs[0].position).toBe(1);
+    expect(secondEnqueue.body.queue.active).toBe(2);
+
+    const release = releaseFirstFetch as (() => void) | null;
+    if (!release) throw new Error("first queued fetch did not start");
+    release();
+
+    const first = await waitForQueuedJob(app, firstEnqueue.body.jobs[0].id);
+    const second = await waitForQueuedJob(app, secondEnqueue.body.jobs[0].id);
+    expect(first.status).toBe("succeeded");
+    expect(first.result.article.url).toBe("https://news.example/one");
+    expect(first.result.raw.agentOutputs).toHaveLength(4);
+    expect(second.status).toBe("succeeded");
+    expect(second.result.article.url).toBe("https://news.example/two");
+  });
+
   test("persists queued article results when a store path is configured", async () => {
     const dir = mkdtempSync(join(tmpdir(), "eigenised-news-queue-"));
     const storePath = join(dir, "research-queue.json");

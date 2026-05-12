@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import type {
   NewsResearchQueueEnqueueResponse,
   NewsResearchQueueJob,
@@ -11,7 +11,7 @@ import type {
 import { isUnknownRecord } from "../lib/guards";
 import { isNewsResearchResponse, isResearchHistoryResponse } from "../lib/manifestGuards";
 import { isHttpUrl } from "../lib/url";
-import { resolveFrontendApiUrl } from "./runtimeConfig";
+import { resolveFrontendApiUrl, resolveFrontendHostedUrl } from "./runtimeConfig";
 import type { FetchLike, SubmitEventLike } from "./types";
 import type { CheckResult } from "../verifier/types";
 
@@ -25,8 +25,6 @@ type ResearchStatus =
   | { kind: "loading" }
   | { kind: "api_error"; message: string; code: string | null; requestId: string | null; retryable: boolean | null }
   | { kind: "success"; response: NewsResearchResponse };
-
-type ResearchMode = "single" | "queue";
 
 type ResearchQueueStatus =
   | { kind: "idle" }
@@ -79,16 +77,18 @@ type FormattedBlock =
 
 const SURFACE = "surface-card";
 const inputClassName = "form-input";
+type HeroAudience = "readers" | "agents";
 
 export function NewsResearchApp({ fetchImpl = fetch }: NewsResearchAppProps) {
-  const [researchMode, setResearchMode] = useState<ResearchMode>("single");
   const [articleUrl, setArticleUrl] = useState("");
+  const [heroAudience, setHeroAudience] = useState<HeroAudience>("readers");
   const [status, setStatus] = useState<ResearchStatus>({ kind: "idle" });
-  const [queueUrlText, setQueueUrlText] = useState("");
   const [queueStatus, setQueueStatus] = useState<ResearchQueueStatus>({ kind: "idle" });
   const [queueSnapshot, setQueueSnapshot] = useState<NewsResearchQueueListResponse | null>(null);
+  const [selectedQueuedJobId, setSelectedQueuedJobId] = useState<string | null>(null);
   const [historyStatus, setHistoryStatus] = useState<ResearchHistoryStatus>({ kind: "loading" });
   const lastQueueSuccessCount = useRef(0);
+  const researchRequestSeq = useRef(0);
 
   async function loadHistory() {
     setHistoryStatus((current) => current.kind === "ready" ? current : { kind: "loading" });
@@ -145,6 +145,24 @@ export function NewsResearchApp({ fetchImpl = fetch }: NewsResearchAppProps) {
   }, [fetchImpl]);
 
   useEffect(() => {
+    let cancelled = false;
+    async function loadInitialQueue() {
+      try {
+        const res = await fetchImpl(resolveFrontendApiUrl("research/jobs"));
+        const body = await readResponseJson(res);
+        if (cancelled || !res.ok || !isNewsResearchQueueListResponse(body)) return;
+        rememberQueueSnapshot(body);
+      } catch {
+        // The side queue is progressive enhancement; leave the empty state visible if it cannot load.
+      }
+    }
+    void loadInitialQueue();
+    return () => {
+      cancelled = true;
+    };
+  }, [fetchImpl]);
+
+  useEffect(() => {
     if (!queueSnapshot?.jobs.some(isActiveQueueJob)) return;
     const timer = window.setInterval(() => {
       void refreshQueue({ silent: true });
@@ -153,13 +171,6 @@ export function NewsResearchApp({ fetchImpl = fetch }: NewsResearchAppProps) {
       window.clearInterval(timer);
     };
   }, [fetchImpl, queueSnapshot?.queue.active]);
-
-  function selectResearchMode(mode: ResearchMode) {
-    if (mode === "queue" && !queueUrlText.trim() && articleUrl.trim()) {
-      setQueueUrlText(articleUrl.trim());
-    }
-    setResearchMode(mode);
-  }
 
   async function onSubmit(event: SubmitEventLike) {
     event.preventDefault();
@@ -170,6 +181,8 @@ export function NewsResearchApp({ fetchImpl = fetch }: NewsResearchAppProps) {
     }
 
     setStatus({ kind: "loading" });
+    const requestSeq = researchRequestSeq.current + 1;
+    researchRequestSeq.current = requestSeq;
     try {
       const res = await fetchImpl(resolveFrontendApiUrl("research", { includeRaw: true }), {
         method: "POST",
@@ -177,6 +190,10 @@ export function NewsResearchApp({ fetchImpl = fetch }: NewsResearchAppProps) {
         body: JSON.stringify({ articleUrl: trimmedArticleUrl }),
       });
       const body = await readResponseJson(res);
+      if (researchRequestSeq.current !== requestSeq) {
+        if (res.ok && isNewsResearchResponse(body)) void loadHistory();
+        return;
+      }
       if (!res.ok) {
         setStatus({ kind: "api_error", ...normalizeResearchApiError(body, res.status) });
         return;
@@ -192,8 +209,10 @@ export function NewsResearchApp({ fetchImpl = fetch }: NewsResearchAppProps) {
         return;
       }
       setStatus({ kind: "success", response: body });
+      setSelectedQueuedJobId(null);
       void loadHistory();
     } catch (error) {
+      if (researchRequestSeq.current !== requestSeq) return;
       setStatus({
         kind: "api_error",
         code: "transport_error",
@@ -204,24 +223,19 @@ export function NewsResearchApp({ fetchImpl = fetch }: NewsResearchAppProps) {
     }
   }
 
-  async function onQueueSubmit(event: SubmitEventLike) {
-    event.preventDefault();
-    const articleUrls = parseQueueArticleUrls(queueUrlText);
-    if (articleUrls.length === 0) {
-      setQueueStatus({ kind: "client_error", message: "Enter at least one news article URL to queue." });
-      return;
-    }
-    if (articleUrls.some((url) => !isHttpUrl(url))) {
-      setQueueStatus({ kind: "client_error", message: "Every queued article must be a valid HTTP or HTTPS URL." });
+  async function onQueueCurrentArticle() {
+    const trimmedArticleUrl = articleUrl.trim();
+    if (!isHttpUrl(trimmedArticleUrl)) {
+      setQueueStatus({ kind: "client_error", message: "Enter a valid news article URL before adding it to the side queue." });
       return;
     }
 
-    setQueueStatus({ kind: "loading", message: "Queueing article research jobs…" });
+    setQueueStatus({ kind: "loading", message: "Adding this article to the side queue…" });
     try {
       const res = await fetchImpl(resolveFrontendApiUrl("research/jobs", { includeRaw: true }), {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ articleUrls }),
+        body: JSON.stringify({ articleUrl: trimmedArticleUrl }),
       });
       const body = await readResponseJson(res);
       if (!res.ok) {
@@ -239,7 +253,13 @@ export function NewsResearchApp({ fetchImpl = fetch }: NewsResearchAppProps) {
         return;
       }
       rememberQueueSnapshot(body);
-      setQueueStatus({ kind: "ready", message: `Queued ${body.jobs.length} article research ${body.jobs.length === 1 ? "job" : "jobs"}.` });
+      const job = body.jobs[0];
+      setQueueStatus({
+        kind: "ready",
+        message: job
+          ? `Queued ${hostForUrl(job.articleUrl)}. It will stay in the side rail until it is ready to open.`
+          : "Queued article research. Refresh the side rail to inspect the job.",
+      });
     } catch (error) {
       setQueueStatus({
         kind: "api_error",
@@ -289,10 +309,13 @@ export function NewsResearchApp({ fetchImpl = fetch }: NewsResearchAppProps) {
   }
 
   async function openStoredReport(entry: ResearchHistoryEntry) {
+    const requestSeq = researchRequestSeq.current + 1;
+    researchRequestSeq.current = requestSeq;
     setStatus({ kind: "loading" });
     try {
       const res = await fetchImpl(resolveFrontendApiUrl(`research/history/${entry.id}`, { includeRaw: true }));
       const body = await readResponseJson(res);
+      if (researchRequestSeq.current !== requestSeq) return;
       if (!res.ok || !isNewsResearchResponse(body)) {
         setStatus({
           kind: "api_error",
@@ -304,8 +327,10 @@ export function NewsResearchApp({ fetchImpl = fetch }: NewsResearchAppProps) {
         return;
       }
       setArticleUrl(body.manifest.request.articleUrl);
+      setSelectedQueuedJobId(null);
       setStatus({ kind: "success", response: body });
     } catch (error) {
+      if (researchRequestSeq.current !== requestSeq) return;
       setStatus({
         kind: "api_error",
         code: "stored_report_unavailable",
@@ -318,12 +343,16 @@ export function NewsResearchApp({ fetchImpl = fetch }: NewsResearchAppProps) {
 
   function openQueuedJob(job: NewsResearchQueueJob) {
     if (job.status !== "succeeded" || !job.result) return;
+    researchRequestSeq.current++;
+    setSelectedQueuedJobId(job.id);
     setArticleUrl(job.result.manifest.request.articleUrl);
     setStatus({ kind: "success", response: job.result });
     void loadHistory();
   }
 
   const response = status.kind === "success" ? status.response : null;
+  const hostedSkillUrl = resolveFrontendHostedUrl("skill.md");
+  const agentPrompt = buildAgentPrompt(hostedSkillUrl, articleUrl);
 
   return (
     <div className="app-shell">
@@ -355,9 +384,12 @@ export function NewsResearchApp({ fetchImpl = fetch }: NewsResearchAppProps) {
                     View app dashboard
                   </a>
                 </div>
-                <p className="hero-note">
-                  Front-page findings first, with prompts and agent runs preserved as the audit trail below the fold.
-                </p>
+                <HeroAudiencePanel
+                  mode={heroAudience}
+                  onSelect={setHeroAudience}
+                  prompt={agentPrompt}
+                  skillUrl={hostedSkillUrl}
+                />
               </div>
             </div>
           </div>
@@ -369,63 +401,55 @@ export function NewsResearchApp({ fetchImpl = fetch }: NewsResearchAppProps) {
               <div className="section-header">
                 <p className="section-kicker">Input</p>
                 <h2 className="section-title">Research a URL</h2>
-                <p className="section-description">Use one article now, or queue a batch so long-running research jobs can complete in the background.</p>
+                <p className="section-description">Start one article now, or add one link at a time to the side queue while another report is still running.</p>
               </div>
 
-              <ResearchModeTabs mode={researchMode} onSelect={selectResearchMode} />
+              <form className="form-stack" onSubmit={onSubmit}>
+                <label className="field-group">
+                  <span className="field-label">News article URL</span>
+                  <input
+                    aria-label="News article URL"
+                    className={inputClassName}
+                    onChange={(event) => setArticleUrl(event.target.value)}
+                    placeholder="https://example.com/news/story"
+                    value={articleUrl}
+                  />
+                </label>
 
-              {researchMode === "single" ? (
-                <form className="form-stack" onSubmit={onSubmit}>
-                  <label className="field-group">
-                    <span className="field-label">News article URL</span>
-                    <input
-                      aria-label="News article URL"
-                      className={inputClassName}
-                      onChange={(event) => setArticleUrl(event.target.value)}
-                      placeholder="https://example.com/news/story"
-                      value={articleUrl}
-                    />
-                  </label>
+                {status.kind === "client_error" || status.kind === "api_error" ? (
+                  <div aria-live="assertive" className="banner banner--danger" role="alert">
+                    <p className="banner__title">Research request{status.kind === "api_error" && status.code ? ` · ${status.code}` : ""}</p>
+                    <p className="banner__body">{status.message}</p>
+                    {status.kind === "api_error" && status.requestId ? (
+                      <p className="banner__body">Request ID: <code>{status.requestId}</code>{status.retryable ? " · retryable" : ""}</p>
+                    ) : null}
+                  </div>
+                ) : null}
 
-                  {status.kind === "client_error" || status.kind === "api_error" ? (
-                    <div aria-live="assertive" className="banner banner--danger" role="alert">
-                      <p className="banner__title">Research request{status.kind === "api_error" && status.code ? ` · ${status.code}` : ""}</p>
-                      <p className="banner__body">{status.message}</p>
-                      {status.kind === "api_error" && status.requestId ? (
-                        <p className="banner__body">Request ID: <code>{status.requestId}</code>{status.retryable ? " · retryable" : ""}</p>
-                      ) : null}
-                    </div>
-                  ) : null}
+                <QueueFeedback queueStatus={queueStatus} />
 
-                  {status.kind === "loading" ? (
-                    <p aria-live="polite" className="status-copy">
-                      Research in progress. Results and diagnostics will appear below.
-                    </p>
-                  ) : null}
+                {status.kind === "loading" ? (
+                  <p aria-live="polite" className="status-copy">
+                    Research in progress. Paste another URL and add it to the queue without interrupting this run.
+                  </p>
+                ) : null}
 
+                <div className="research-actions">
                   <button className="button-primary" disabled={status.kind === "loading"} type="submit">
                     {status.kind === "loading" ? "Researching…" : "Research both sides"}
                   </button>
+                  <button
+                    className="button-ghost button-ghost--plain queue-enqueue-button"
+                    disabled={queueStatus.kind === "loading"}
+                    onClick={() => void onQueueCurrentArticle()}
+                    type="button"
+                  >
+                    {queueStatus.kind === "loading" ? "Adding to queue…" : "Add to side queue"}
+                  </button>
+                </div>
 
-                  <ResearchFlow status={status.kind} />
-                </form>
-              ) : (
-                <QueueResearchPanel
-                  queueSnapshot={queueSnapshot}
-                  queueStatus={queueStatus}
-                  queueUrlText={queueUrlText}
-                  onOpenJob={openQueuedJob}
-                  onQueueUrlTextChange={setQueueUrlText}
-                  onRefresh={() => void refreshQueue()}
-                  onSubmit={onQueueSubmit}
-                />
-              )}
-
-              <PreviousResearchPanel
-                historyStatus={historyStatus}
-                onOpen={openStoredReport}
-                selectedManifestHash={response?.manifest.manifestSha256 ?? null}
-              />
+                <ResearchFlow status={status.kind} />
+              </form>
             </div>
           </section>
 
@@ -484,8 +508,96 @@ export function NewsResearchApp({ fetchImpl = fetch }: NewsResearchAppProps) {
               )}
             </div>
           </section>
+
+          <aside className={`${SURFACE} section-card section-card--queue`} aria-label="Queued article research side rail">
+            <div className="surface-card__body">
+              <QueueSnapshotPanel
+                queueSnapshot={queueSnapshot}
+                queueStatus={queueStatus}
+                selectedJobId={selectedQueuedJobId}
+                onOpenJob={openQueuedJob}
+                onRefresh={() => void refreshQueue()}
+              />
+              <PreviousResearchPanel
+                historyStatus={historyStatus}
+                onOpen={openStoredReport}
+                selectedManifestHash={response?.manifest.manifestSha256 ?? null}
+              />
+            </div>
+          </aside>
         </div>
       </div>
+    </div>
+  );
+}
+
+function buildAgentPrompt(skillUrl: string, articleUrl: string): string {
+  const targetArticle = articleUrl.trim() || "<ARTICLE_URL>";
+  return `Use the following skill \`${skillUrl}\` and research on this article ${targetArticle}`;
+}
+
+function HeroAudiencePanel({
+  mode,
+  onSelect,
+  prompt,
+  skillUrl,
+}: {
+  mode: HeroAudience;
+  onSelect: (mode: HeroAudience) => void;
+  prompt: string;
+  skillUrl: string;
+}) {
+  return (
+    <div className="hero-audience">
+      <div className="hero-audience__tabs" role="tablist" aria-label="Header audience tools">
+        <button
+          aria-controls="hero-readers-panel"
+          aria-selected={mode === "readers"}
+          className={`hero-audience__tab ${mode === "readers" ? "hero-audience__tab--active" : ""}`}
+          id="hero-readers-tab"
+          onClick={() => onSelect("readers")}
+          role="tab"
+          type="button"
+        >
+          Readers
+        </button>
+        <button
+          aria-controls="hero-agents-panel"
+          aria-selected={mode === "agents"}
+          className={`hero-audience__tab ${mode === "agents" ? "hero-audience__tab--active" : ""}`}
+          id="hero-agents-tab"
+          onClick={() => onSelect("agents")}
+          role="tab"
+          type="button"
+        >
+          For Agents
+        </button>
+      </div>
+
+      {mode === "agents" ? (
+        <div
+          aria-labelledby="hero-agents-tab"
+          className="hero-note hero-note--agents"
+          id="hero-agents-panel"
+          role="tabpanel"
+        >
+          <span className="hero-note__eyebrow">Agent handoff</span>
+          <p className="hero-note__copy">Copy this into an autonomous agent to use the hosted paid-research skill.</p>
+          <pre className="hero-agent-prompt"><code>{prompt}</code></pre>
+          <a className="hero-agent-skill-link" href={skillUrl} rel="noopener noreferrer" target="_blank">
+            Open hosted SKILL.md
+          </a>
+        </div>
+      ) : (
+        <p
+          aria-labelledby="hero-readers-tab"
+          className="hero-note"
+          id="hero-readers-panel"
+          role="tabpanel"
+        >
+          Front-page findings first, with prompts and agent runs preserved as the audit trail below the fold.
+        </p>
+      )}
     </div>
   );
 }
@@ -512,109 +624,62 @@ function ResearchFlow({ status }: { status: ResearchStatus["kind"] }) {
   );
 }
 
-function ResearchModeTabs({ mode, onSelect }: { mode: ResearchMode; onSelect: (mode: ResearchMode) => void }) {
+function QueueFeedback({ queueStatus }: { queueStatus: ResearchQueueStatus }) {
+  if (queueStatus.kind === "client_error" || queueStatus.kind === "api_error") {
+    return (
+      <div aria-live="assertive" className={`banner ${queueStatus.kind === "client_error" ? "banner--warning" : "banner--danger"}`} role="alert">
+        <p className="banner__title">Queue request{queueStatus.kind === "api_error" && queueStatus.code ? ` · ${queueStatus.code}` : ""}</p>
+        <p className="banner__body">{queueStatus.message}</p>
+        {queueStatus.kind === "api_error" && queueStatus.requestId ? (
+          <p className="banner__body">Request ID: <code>{queueStatus.requestId}</code>{queueStatus.retryable ? " · retryable" : ""}</p>
+        ) : null}
+      </div>
+    );
+  }
+
+  if (queueStatus.kind === "loading" || queueStatus.kind === "ready") {
+    return <p aria-live="polite" className="status-copy">{queueStatus.message}</p>;
+  }
+
   return (
-    <div className="mode-switch" role="group" aria-label="Research mode">
-      <button
-        aria-pressed={mode === "single"}
-        className={`mode-switch__button ${mode === "single" ? "mode-switch__button--active" : ""}`}
-        onClick={() => onSelect("single")}
-        type="button"
-      >
-        Single URL
-      </button>
-      <button
-        aria-pressed={mode === "queue"}
-        className={`mode-switch__button ${mode === "queue" ? "mode-switch__button--active" : ""}`}
-        onClick={() => onSelect("queue")}
-        type="button"
-      >
-        Queue batch
-      </button>
-    </div>
-  );
-}
-
-function QueueResearchPanel({
-  queueSnapshot,
-  queueStatus,
-  queueUrlText,
-  onOpenJob,
-  onQueueUrlTextChange,
-  onRefresh,
-  onSubmit,
-}: {
-  queueSnapshot: NewsResearchQueueListResponse | null;
-  queueStatus: ResearchQueueStatus;
-  queueUrlText: string;
-  onOpenJob: (job: NewsResearchQueueJob) => void;
-  onQueueUrlTextChange: (value: string) => void;
-  onRefresh: () => void;
-  onSubmit: (event: SubmitEventLike) => void;
-}) {
-  const isLoading = queueStatus.kind === "loading";
-  return (
-    <div className="queue-panel">
-      <form className="form-stack" onSubmit={onSubmit}>
-        <label className="field-group">
-          <span className="field-label">Article URLs</span>
-          <textarea
-            aria-label="Article URLs"
-            className={`${inputClassName} form-textarea queue-url-textarea`}
-            onChange={(event) => onQueueUrlTextChange(event.target.value)}
-            placeholder={"One article URL per line\nhttps://example.com/news/one\nhttps://example.com/news/two"}
-            value={queueUrlText}
-          />
-        </label>
-
-        {queueStatus.kind === "client_error" || queueStatus.kind === "api_error" ? (
-          <div aria-live="assertive" className={`banner ${queueStatus.kind === "client_error" ? "banner--warning" : "banner--danger"}`} role="alert">
-            <p className="banner__title">Queue request{queueStatus.kind === "api_error" && queueStatus.code ? ` · ${queueStatus.code}` : ""}</p>
-            <p className="banner__body">{queueStatus.message}</p>
-            {queueStatus.kind === "api_error" && queueStatus.requestId ? (
-              <p className="banner__body">Request ID: <code>{queueStatus.requestId}</code>{queueStatus.retryable ? " · retryable" : ""}</p>
-            ) : null}
-          </div>
-        ) : null}
-
-        {queueStatus.kind === "loading" ? (
-          <p aria-live="polite" className="status-copy">{queueStatus.message}</p>
-        ) : null}
-        {queueStatus.kind === "ready" ? (
-          <p aria-live="polite" className="status-copy">{queueStatus.message}</p>
-        ) : null}
-        {queueStatus.kind === "idle" ? (
-          <p className="status-copy">
-            Queue multiple URLs for sequential background research. Jobs keep their status and can be opened when complete.
-          </p>
-        ) : null}
-
-        <div className="queue-actions">
-          <button className="button-primary" disabled={isLoading} type="submit">
-            {isLoading ? "Queue working…" : "Queue article research"}
-          </button>
-          <button className="button-ghost button-ghost--plain" disabled={isLoading} onClick={onRefresh} type="button">
-            Refresh queue
-          </button>
-        </div>
-      </form>
-
-      <QueueSnapshotPanel queueSnapshot={queueSnapshot} onOpenJob={onOpenJob} />
-    </div>
+    <p className="status-copy">
+      The side queue accepts one URL per click and keeps working even while the main research panel is busy.
+    </p>
   );
 }
 
 function QueueSnapshotPanel({
   queueSnapshot,
+  queueStatus,
+  selectedJobId,
   onOpenJob,
+  onRefresh,
 }: {
   queueSnapshot: NewsResearchQueueListResponse | null;
+  queueStatus: ResearchQueueStatus;
+  selectedJobId: string | null;
   onOpenJob: (job: NewsResearchQueueJob) => void;
+  onRefresh: () => void;
 }) {
+  const activeCount = queueSnapshot?.queue.active ?? 0;
+  const isLoading = queueStatus.kind === "loading";
+
   if (!queueSnapshot) {
     return (
       <section className="queue-status-panel" aria-label="Research queue status">
-        <div className="queue-status-panel__empty">No queue snapshot loaded yet. Queue URLs or refresh the queue to inspect jobs.</div>
+        <div className="queue-status-panel__head">
+          <div>
+            <p className="section-kicker">Side queue</p>
+            <h3 className="section-title section-title--sm">Queued articles</h3>
+          </div>
+          <button className="button-ghost button-ghost--plain queue-refresh-button" disabled={isLoading} onClick={onRefresh} type="button">
+            Refresh
+          </button>
+        </div>
+        <p className="queue-status-panel__copy">
+          Add a URL from the input card. Finished reports will appear here and can be opened in the results pane.
+        </p>
+        <div className="queue-status-panel__empty">No queue snapshot loaded yet.</div>
       </section>
     );
   }
@@ -624,13 +689,21 @@ function QueueSnapshotPanel({
     <section className="queue-status-panel" aria-label="Research queue status">
       <div className="queue-status-panel__head">
         <div>
-          <p className="section-kicker">Queue</p>
-          <h3 className="section-title section-title--sm">Research jobs</h3>
+          <p className="section-kicker">Side queue</p>
+          <h3 className="section-title section-title--sm">Queued articles</h3>
         </div>
-        <span className={`queue-status-panel__badge ${queueSnapshot.queue.active > 0 ? "queue-status-panel__badge--active" : ""}`}>
-          {queueSnapshot.queue.active > 0 ? `${queueSnapshot.queue.active} active` : "Idle"}
-        </span>
+        <div className="queue-status-panel__head-actions">
+          <span className={`queue-status-panel__badge ${activeCount > 0 ? "queue-status-panel__badge--active" : ""}`}>
+            {activeCount > 0 ? `${activeCount} active` : "Idle"}
+          </span>
+          <button className="button-ghost button-ghost--plain queue-refresh-button" disabled={isLoading} onClick={onRefresh} type="button">
+            Refresh
+          </button>
+        </div>
       </div>
+      <p className="queue-status-panel__copy">
+        Ready cards are clickable. Open one to present that signed research report in the main results pane.
+      </p>
       <QueueSummary queue={queueSnapshot.queue} />
       {jobs.length === 0 ? (
         <p className="queue-status-panel__empty">No queued research jobs yet.</p>
@@ -638,7 +711,7 @@ function QueueSnapshotPanel({
         <ol className="queue-job-list">
           {jobs.map((job) => (
             <li className="queue-job-list__item" key={job.id}>
-              <QueueJobCard job={job} onOpen={onOpenJob} />
+              <QueueJobCard job={job} selected={selectedJobId === job.id} onOpen={onOpenJob} />
             </li>
           ))}
         </ol>
@@ -668,10 +741,24 @@ function QueueSummary({ queue }: { queue: NewsResearchQueueSummary }) {
   );
 }
 
-function QueueJobCard({ job, onOpen }: { job: NewsResearchQueueJob; onOpen: (job: NewsResearchQueueJob) => void }) {
+function QueueJobCard({ job, selected, onOpen }: { job: NewsResearchQueueJob; selected: boolean; onOpen: (job: NewsResearchQueueJob) => void }) {
   const canOpen = job.status === "succeeded" && !!job.result;
+  function handleKeyDown(event: KeyboardEvent<HTMLElement>) {
+    if (!canOpen) return;
+    if (event.key !== "Enter" && event.key !== " ") return;
+    event.preventDefault();
+    onOpen(job);
+  }
+
   return (
-    <article className={`queue-job-card queue-job-card--${job.status}`}>
+    <article
+      aria-current={selected ? "true" : undefined}
+      className={`queue-job-card queue-job-card--${job.status} ${canOpen ? "queue-job-card--clickable" : ""} ${selected ? "queue-job-card--selected" : ""}`}
+      onClick={canOpen ? () => onOpen(job) : undefined}
+      onKeyDown={handleKeyDown}
+      role={canOpen ? "button" : undefined}
+      tabIndex={canOpen ? 0 : undefined}
+    >
       <div className="queue-job-card__head">
         <div>
           <span className="queue-job-card__host">{hostForUrl(job.articleUrl)}</span>
@@ -686,11 +773,7 @@ function QueueJobCard({ job, onOpen }: { job: NewsResearchQueueJob; onOpen: (job
       </div>
       {job.result ? <p className="queue-job-card__preview">{trimPreview(job.result.mainSummary || job.result.proAnalysis || job.result.contraAnalysis)}</p> : null}
       {job.error ? <p className="queue-job-card__error">{job.error.message}</p> : null}
-      {canOpen ? (
-        <button className="button-ghost button-ghost--plain queue-job-card__action" onClick={() => onOpen(job)} type="button">
-          Open result
-        </button>
-      ) : null}
+      {canOpen ? <span className="queue-job-card__action">Open result</span> : null}
     </article>
   );
 }
@@ -1177,13 +1260,6 @@ function isBrowserVerifyCheck(value: unknown): value is BrowserVerifyCheck {
     typeof value.label === "string" &&
     typeof value.meaning === "string"
   );
-}
-
-function parseQueueArticleUrls(value: string): string[] {
-  return value
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0);
 }
 
 function isNewsResearchQueueEnqueueResponse(value: unknown): value is NewsResearchQueueEnqueueResponse {
