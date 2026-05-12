@@ -1,10 +1,11 @@
-import { useState, type ReactNode } from "react";
-import type { NewsResearchResponse } from "../types";
+import { useEffect, useState, type ReactNode } from "react";
+import type { NewsResearchResponse, ResearchHistoryEntry } from "../types";
 import { isUnknownRecord } from "../lib/guards";
-import { isNewsResearchResponse } from "../lib/manifestGuards";
+import { isNewsResearchResponse, isResearchHistoryResponse } from "../lib/manifestGuards";
 import { isHttpUrl } from "../lib/url";
 import { resolveFrontendApiUrl } from "./runtimeConfig";
 import type { FetchLike, SubmitEventLike } from "./types";
+import type { CheckResult } from "../verifier/types";
 
 type NewsResearchAppProps = {
   fetchImpl?: FetchLike;
@@ -24,6 +25,35 @@ type ResearchApiError = {
   retryable: boolean | null;
 };
 
+type ResearchHistoryStatus =
+  | { kind: "loading" }
+  | { kind: "ready"; entries: ResearchHistoryEntry[] }
+  | { kind: "error"; message: string };
+
+type BrowserVerifyCheck = CheckResult & {
+  label: string;
+  meaning: string;
+};
+
+type BrowserVerifyResponse = {
+  ok: boolean;
+  mode: "browser";
+  summary: {
+    pass: number;
+    fail: number;
+    skip: number;
+    title: string;
+    explanation: string;
+  };
+  checks: BrowserVerifyCheck[];
+};
+
+type BrowserVerifyStatus =
+  | { kind: "idle" }
+  | { kind: "checking" }
+  | { kind: "success"; report: BrowserVerifyResponse }
+  | { kind: "error"; message: string };
+
 type FormattedBlock =
   | { kind: "paragraph"; text: string }
   | { kind: "heading"; text: string }
@@ -36,6 +66,51 @@ const inputClassName = "form-input";
 export function NewsResearchApp({ fetchImpl = fetch }: NewsResearchAppProps) {
   const [articleUrl, setArticleUrl] = useState("");
   const [status, setStatus] = useState<ResearchStatus>({ kind: "idle" });
+  const [historyStatus, setHistoryStatus] = useState<ResearchHistoryStatus>({ kind: "loading" });
+
+  async function loadHistory() {
+    setHistoryStatus((current) => current.kind === "ready" ? current : { kind: "loading" });
+    try {
+      const res = await fetchImpl(resolveFrontendApiUrl("research/history"));
+      const body = await readResponseJson(res);
+      if (!res.ok || !isResearchHistoryResponse(body)) {
+        setHistoryStatus({ kind: "error", message: "Previous research is not available yet." });
+        return;
+      }
+      setHistoryStatus({ kind: "ready", entries: body.entries });
+    } catch (error) {
+      setHistoryStatus({
+        kind: "error",
+        message: error instanceof Error ? error.message : "Previous research could not be loaded.",
+      });
+    }
+  }
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadInitialHistory() {
+      try {
+        const res = await fetchImpl(resolveFrontendApiUrl("research/history"));
+        const body = await readResponseJson(res);
+        if (cancelled) return;
+        if (!res.ok || !isResearchHistoryResponse(body)) {
+          setHistoryStatus({ kind: "error", message: "Previous research is not available yet." });
+          return;
+        }
+        setHistoryStatus({ kind: "ready", entries: body.entries });
+      } catch (error) {
+        if (cancelled) return;
+        setHistoryStatus({
+          kind: "error",
+          message: error instanceof Error ? error.message : "Previous research could not be loaded.",
+        });
+      }
+    }
+    void loadInitialHistory();
+    return () => {
+      cancelled = true;
+    };
+  }, [fetchImpl]);
 
   async function onSubmit(event: SubmitEventLike) {
     event.preventDefault();
@@ -68,11 +143,40 @@ export function NewsResearchApp({ fetchImpl = fetch }: NewsResearchAppProps) {
         return;
       }
       setStatus({ kind: "success", response: body });
+      void loadHistory();
     } catch (error) {
       setStatus({
         kind: "api_error",
         code: "transport_error",
         message: error instanceof Error ? error.message : String(error),
+        requestId: null,
+        retryable: true,
+      });
+    }
+  }
+
+  async function openStoredReport(entry: ResearchHistoryEntry) {
+    setStatus({ kind: "loading" });
+    try {
+      const res = await fetchImpl(resolveFrontendApiUrl(`research/history/${entry.id}`, { includeRaw: true }));
+      const body = await readResponseJson(res);
+      if (!res.ok || !isNewsResearchResponse(body)) {
+        setStatus({
+          kind: "api_error",
+          code: "stored_report_unavailable",
+          message: "The saved article report could not be opened.",
+          requestId: null,
+          retryable: true,
+        });
+        return;
+      }
+      setArticleUrl(body.manifest.request.articleUrl);
+      setStatus({ kind: "success", response: body });
+    } catch (error) {
+      setStatus({
+        kind: "api_error",
+        code: "stored_report_unavailable",
+        message: error instanceof Error ? error.message : "The saved article report could not be opened.",
         requestId: null,
         retryable: true,
       });
@@ -162,6 +266,12 @@ export function NewsResearchApp({ fetchImpl = fetch }: NewsResearchAppProps) {
 
                 <ResearchFlow status={status.kind} />
               </form>
+
+              <PreviousResearchPanel
+                historyStatus={historyStatus}
+                onOpen={openStoredReport}
+                selectedManifestHash={response?.manifest.manifestSha256 ?? null}
+              />
             </div>
           </section>
 
@@ -176,7 +286,9 @@ export function NewsResearchApp({ fetchImpl = fetch }: NewsResearchAppProps) {
               {response ? (
                 <div className="result-stack">
                   <ResultDocket response={response} />
+                  <MainSummaryPanel text={response.mainSummary} />
                   <ArticleTracePanel article={response.article} build={response.verifiableBuild} />
+                  <VerificationGuidePanel fetchImpl={fetchImpl} response={response} />
                   <div className="perspective-compare" aria-label="Side-by-side perspective comparison">
                     <PerspectivePanel
                       title="For the article"
@@ -246,6 +358,65 @@ function ResearchFlow({ status }: { status: ResearchStatus["kind"] }) {
   );
 }
 
+function PreviousResearchPanel({
+  historyStatus,
+  onOpen,
+  selectedManifestHash,
+}: {
+  historyStatus: ResearchHistoryStatus;
+  onOpen: (entry: ResearchHistoryEntry) => void;
+  selectedManifestHash: string | null;
+}) {
+  return (
+    <section className="history-panel" aria-label="Previously researched articles">
+      <div className="history-panel__head">
+        <div>
+          <p className="section-kicker">Library</p>
+          <h3 className="section-title section-title--sm">Previous researched articles</h3>
+        </div>
+        <span className="history-panel__badge">Persistent</span>
+      </div>
+      <p className="history-panel__copy">
+        Saved on EigenCompute persistent storage so duplicate links reuse the existing report. Click any article to read it instantly.
+      </p>
+      {historyStatus.kind === "loading" ? (
+        <p className="history-panel__state">Loading saved reports…</p>
+      ) : null}
+      {historyStatus.kind === "error" ? (
+        <p className="history-panel__state history-panel__state--warning">{historyStatus.message}</p>
+      ) : null}
+      {historyStatus.kind === "ready" && historyStatus.entries.length === 0 ? (
+        <p className="history-panel__state">No saved reports yet. Your first successful research run will appear here.</p>
+      ) : null}
+      {historyStatus.kind === "ready" && historyStatus.entries.length > 0 ? (
+        <ol className="history-list">
+          {historyStatus.entries.slice(0, 8).map((entry) => {
+            const selected = selectedManifestHash === entry.manifestSha256;
+            return (
+              <li className="history-list__item" key={entry.id}>
+                <button
+                  aria-current={selected ? "true" : undefined}
+                  className={`history-card ${selected ? "history-card--selected" : ""}`}
+                  onClick={() => onOpen(entry)}
+                  type="button"
+                >
+                  <span className="history-card__host">{entry.articleHost}</span>
+                  <span className="history-card__url">{entry.articleUrl}</span>
+                  {entry.summaryPreview ? <span className="history-card__summary">{entry.summaryPreview}</span> : null}
+                  <span className="history-card__meta">
+                    <span title={entry.manifestSha256}>Manifest {shortHash(entry.manifestSha256)}</span>
+                    <span>{formatHistoryDate(entry.researchedAt)}</span>
+                  </span>
+                </button>
+              </li>
+            );
+          })}
+        </ol>
+      ) : null}
+    </section>
+  );
+}
+
 function ResultDocket({ response }: { response: NewsResearchResponse }) {
   const promptCount = response.promptBindings?.length ?? 0;
   const buildLabel = response.verifiableBuild?.environment ?? "local";
@@ -262,7 +433,7 @@ function ResultDocket({ response }: { response: NewsResearchResponse }) {
         </div>
         <div>
           <dt>Perspectives</dt>
-          <dd>pro / contra</dd>
+          <dd>pro / contra / summary</dd>
         </div>
         <div>
           <dt>Prompts</dt>
@@ -273,6 +444,21 @@ function ResultDocket({ response }: { response: NewsResearchResponse }) {
           <dd>{buildLabel}</dd>
         </div>
       </dl>
+    </section>
+  );
+}
+
+function MainSummaryPanel({ text }: { text: string }) {
+  return (
+    <section className="main-summary-panel" aria-label="Main agent summary">
+      <div className="main-summary-panel__header">
+        <div>
+          <p className="main-summary-panel__eyebrow">Main agent summary</p>
+          <h3 className="main-summary-panel__title">Where the pro and contra takes meet</h3>
+        </div>
+        <span className="main-summary-panel__badge">Synthesis</span>
+      </div>
+      <ReadingBlock text={text} />
     </section>
   );
 }
@@ -343,10 +529,91 @@ function ArticleTracePanel({
         {build ? (
           <div>
             <dt>Build</dt>
-            <dd title={build.imageDigest}>{build.environment} · {shortHash(build.imageDigest)}</dd>
+            <dd title={metadataTitle(build.imageDigest)}>{build.environment} · {buildMetadataValue("image", build.imageDigest)}</dd>
           </div>
         ) : null}
       </dl>
+    </section>
+  );
+}
+
+function VerificationGuidePanel({ response, fetchImpl }: { response: NewsResearchResponse; fetchImpl: FetchLike }) {
+  const [verifyStatus, setVerifyStatus] = useState<BrowserVerifyStatus>({ kind: "idle" });
+  const manifestHash = response.manifest?.manifestSha256;
+  const build = response.verifiableBuild;
+  const promptCount = response.promptBindings?.length ?? 0;
+  const rawPromptCount = response.raw?.agentOutputs.length ?? 0;
+
+  async function onVerify() {
+    setVerifyStatus({ kind: "checking" });
+    try {
+      const res = await fetchImpl(resolveFrontendApiUrl("verify"), {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ response }),
+      });
+      const body = await readResponseJson(res);
+      if (!isBrowserVerifyResponse(body)) {
+        setVerifyStatus({ kind: "error", message: "The verifier returned an unexpected response." });
+        return;
+      }
+      setVerifyStatus({ kind: "success", report: body });
+    } catch (error) {
+      setVerifyStatus({
+        kind: "error",
+        message: error instanceof Error ? error.message : "The browser verifier could not run.",
+      });
+    }
+  }
+
+  const checks = [
+    {
+      label: "Same article",
+      value: response.article.contentSha256 ? shortHash(response.article.contentSha256) : "not hashable",
+      copy: "Both agents analyze the same fetched article context, so the disagreement is about interpretation rather than input drift.",
+    },
+    {
+      label: "Prompt record",
+      value: `${promptCount} bound`,
+      copy: "The planner, pro, contra, and summary instructions are visible below and their hashes are signed into the manifest.",
+    },
+    {
+      label: "Exact run input",
+      value: rawPromptCount > 0 ? `${rawPromptCount} prompts` : "raw missing",
+      copy: rawPromptCount > 0
+        ? "This response includes the full prompt each agent ran with, ready for the browser verifier."
+        : "Raw prompts and outputs are not included in this response, so the exact-run check will be limited.",
+    },
+    {
+      label: "Build proof",
+      value: build ? buildMetadataValue("commit", build.commitSha) : "not provided",
+      copy: "The EigenCloud dashboard link ties the run back to the deployed app, image digest, commit, and agent address when available.",
+    },
+  ];
+
+  return (
+    <section className="verification-guide" aria-label="Verification guide">
+      <div className="verification-guide__header">
+        <div>
+          <p className="section-kicker">Verification guide</p>
+          <h3 className="section-title section-title--sm">What the proof means</h3>
+          <p className="section-description">
+            Verification does not choose a winner between the pro and contra opinions. It shows exactly which article, prompts, outputs, signed manifest, and verifiable build produced them.
+          </p>
+        </div>
+        {manifestHash ? <span className="verification-guide__seal" title={manifestHash}>Manifest {shortHash(manifestHash)}</span> : null}
+      </div>
+      <div className="verification-guide__checks">
+        {checks.map((check) => (
+          <article className="verification-check" key={check.label}>
+            <p className="verification-check__label">{check.label}</p>
+            <p className="verification-check__value">{check.value}</p>
+            <p className="verification-check__copy">{check.copy}</p>
+          </article>
+        ))}
+      </div>
+      {build ? <BuildStrip build={build} /> : null}
+      <ResearchVerificationPanel manifestHash={manifestHash} onVerify={onVerify} status={verifyStatus} />
     </section>
   );
 }
@@ -369,26 +636,7 @@ function PromptProvenancePanel({ response }: { response: NewsResearchResponse })
         <span className="provenance-panel__summary-meta">{bindings.length || 0} bound prompts</span>
       </summary>
       <div className="provenance-panel__content">
-        {build ? (
-          <div className="build-strip">
-            <span title={build.commitSha}>Commit {shortHash(build.commitSha)}</span>
-            <span title={build.imageDigest}>Image {shortHash(build.imageDigest)}</span>
-            <span>{build.environment}</span>
-            {build.dashboardUrl ? (
-              <a href={build.dashboardUrl} rel="noopener noreferrer" target="_blank">
-                Verify build
-              </a>
-            ) : null}
-            {build.promptSourceUrl ? (
-              <a href={build.promptSourceUrl} rel="noopener noreferrer" target="_blank">
-                Prompt source
-              </a>
-            ) : (
-              <span>{build.promptSourcePath}</span>
-            )}
-          </div>
-        ) : null}
-        <ResearchVerificationPanel response={response} />
+        {build ? <BuildStrip build={build} /> : null}
         {bindings.length > 0 ? (
           <div className="prompt-binding-grid">
             {bindings.map((binding) => (
@@ -403,6 +651,7 @@ function PromptProvenancePanel({ response }: { response: NewsResearchResponse })
                     <strong>Generated research prompt:</strong> {binding.researchPrompt}
                   </p>
                 ) : null}
+                <AgentRunEvidence response={response} role={binding.role} />
                 <dl className="prompt-binding-card__hashes">
                   <div>
                     <dt>System prompt</dt>
@@ -422,21 +671,115 @@ function PromptProvenancePanel({ response }: { response: NewsResearchResponse })
   );
 }
 
-function ResearchVerificationPanel({ response }: { response: NewsResearchResponse }) {
-  const manifestHash = response.manifest?.manifestSha256;
+function BuildStrip({ build }: { build: NewsResearchResponse["verifiableBuild"] }) {
+  return (
+    <div className="build-strip" aria-label="Verifiable build metadata">
+      <span className={metadataChipClass(build.commitSha)} title={metadataTitle(build.commitSha)}>
+        {buildMetadataValue("commit", build.commitSha)}
+      </span>
+      <span className={metadataChipClass(build.imageDigest)} title={metadataTitle(build.imageDigest)}>
+        {buildMetadataValue("image", build.imageDigest)}
+      </span>
+      <span>{build.environment}</span>
+      {build.dashboardUrl ? (
+        <a className="build-strip__verify" href={build.dashboardUrl} rel="noopener noreferrer" target="_blank">
+          Verify build ↗
+        </a>
+      ) : (
+        <span className="build-strip__muted">No dashboard link</span>
+      )}
+      {build.promptSourceUrl ? (
+        <a className="build-strip__source" href={build.promptSourceUrl} rel="noopener noreferrer" target="_blank">
+          Prompt source
+        </a>
+      ) : (
+        <span title={build.promptSourcePath}>{build.promptSourcePath}</span>
+      )}
+    </div>
+  );
+}
+
+function AgentRunEvidence({ response, role }: { response: NewsResearchResponse; role: NewsResearchResponse["promptBindings"][number]["role"] }) {
+  const run = response.agentRuns.find((candidate) => candidate.role === role);
+  const raw = response.raw?.agentOutputs.find((candidate) => candidate.role === role);
+  if (!run && !raw) return null;
+
+  return (
+    <div className="agent-run-evidence">
+      <div className="agent-run-evidence__meta">
+        {run ? <span>{run.provider}/{run.model}</span> : null}
+        {run ? <span>Status {run.status}</span> : null}
+        {run?.rawOutputSha256 ? <span title={run.rawOutputSha256}>Output {shortHash(run.rawOutputSha256)}</span> : null}
+      </div>
+      {raw ? (
+        <details className="agent-run-evidence__prompt">
+          <summary>Exact prompt sent to this agent</summary>
+          <pre>{raw.prompt}</pre>
+        </details>
+      ) : (
+        <p className="agent-run-evidence__missing">Exact prompt is available when this report is generated with audit data enabled.</p>
+      )}
+    </div>
+  );
+}
+
+function ResearchVerificationPanel({
+  manifestHash,
+  onVerify,
+  status,
+}: {
+  manifestHash: string | undefined;
+  onVerify: () => void;
+  status: BrowserVerifyStatus;
+}) {
   if (!manifestHash) return null;
-  const packageHref = `data:application/json;charset=utf-8,${encodeURIComponent(JSON.stringify(response, null, 2))}`;
-  const fileSuffix = shortHash(manifestHash).replace(/[^a-zA-Z0-9]/g, "");
   return (
     <div className="research-verification">
       <div>
-        <p className="research-verification__kicker">Signed research package</p>
+        <p className="research-verification__kicker">Browser verification</p>
         <p className="research-verification__hash" title={manifestHash}>{shortHash(manifestHash)}</p>
+        <p className="research-verification__copy">
+          Check the signed manifest, agent signature, displayed outputs, and exact agent-run payload right here. No terminal command or file download needed.
+        </p>
       </div>
-      <a className="research-verification__action" download={`research-${fileSuffix || "manifest"}.json`} href={packageHref}>
-        Verify research
-      </a>
-      <code className="research-verification__command">npx tsx scripts/verify-manifest.ts response.json --refetch --ecloud --strict</code>
+      <button className="research-verification__action" disabled={status.kind === "checking"} onClick={onVerify} type="button">
+        {status.kind === "checking" ? "Verifying…" : "Verify this result"}
+      </button>
+      <BrowserVerificationResult status={status} />
+    </div>
+  );
+}
+
+function BrowserVerificationResult({ status }: { status: BrowserVerifyStatus }) {
+  if (status.kind === "idle") {
+    return <p className="research-verification__note">Runs an instant integrity check against the current result.</p>;
+  }
+  if (status.kind === "checking") {
+    return <p className="research-verification__note" aria-live="polite">Running browser verification…</p>;
+  }
+  if (status.kind === "error") {
+    return <p className="research-verification__note research-verification__note--fail" role="alert">{status.message}</p>;
+  }
+
+  const report = status.report;
+  return (
+    <div className={`browser-verify browser-verify--${report.ok ? "ok" : "fail"}`} aria-live="polite">
+      <div className="browser-verify__summary">
+        <strong>{report.summary.title}</strong>
+        <span>{report.summary.pass} passed · {report.summary.fail} failed · {report.summary.skip} not checked</span>
+        <p>{report.summary.explanation}</p>
+      </div>
+      <ul className="browser-verify__checks">
+        {report.checks.map((check) => (
+          <li className={`browser-verify__check browser-verify__check--${check.status}`} key={check.name}>
+            <span className="browser-verify__check-status">{labelForCheckStatus(check.status)}</span>
+            <span>
+              <strong>{check.label}</strong>
+              <small>{check.meaning}</small>
+            </span>
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }
@@ -471,6 +814,32 @@ async function readResponseJson(response: Response): Promise<unknown> {
   } catch {
     return null;
   }
+}
+
+function isBrowserVerifyResponse(value: unknown): value is BrowserVerifyResponse {
+  if (!isUnknownRecord(value) || typeof value.ok !== "boolean" || value.mode !== "browser") return false;
+  const summary = value.summary;
+  return (
+    isUnknownRecord(summary) &&
+    typeof summary.pass === "number" &&
+    typeof summary.fail === "number" &&
+    typeof summary.skip === "number" &&
+    typeof summary.title === "string" &&
+    typeof summary.explanation === "string" &&
+    Array.isArray(value.checks) &&
+    value.checks.every(isBrowserVerifyCheck)
+  );
+}
+
+function isBrowserVerifyCheck(value: unknown): value is BrowserVerifyCheck {
+  return (
+    isUnknownRecord(value) &&
+    typeof value.name === "string" &&
+    (value.status === "pass" || value.status === "fail" || value.status === "skip") &&
+    typeof value.detail === "string" &&
+    typeof value.label === "string" &&
+    typeof value.meaning === "string"
+  );
 }
 
 function normalizeResearchApiError(body: unknown, status: number): ResearchApiError {
@@ -588,10 +957,42 @@ function shortHash(value: string): string {
   return `${prefix}${hash.slice(0, 8)}…${hash.slice(-6)}`;
 }
 
+function formatHistoryDate(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+}
+
+function isKnownMetadata(value: string | null | undefined): value is string {
+  const normalized = value?.trim().toLowerCase();
+  return !!normalized && normalized !== "unknown" && normalized !== "unavailable" && normalized !== "null";
+}
+
+function buildMetadataValue(kind: "commit" | "image", value: string): string {
+  const label = kind === "commit" ? "Commit" : "Image";
+  return isKnownMetadata(value) ? `${label} ${shortHash(value)}` : `${label} not provided`;
+}
+
+function metadataTitle(value: string): string {
+  return isKnownMetadata(value) ? value : "Deployment metadata was not provided by the runtime environment.";
+}
+
+function metadataChipClass(value: string): string {
+  return isKnownMetadata(value) ? "build-strip__chip" : "build-strip__chip build-strip__chip--missing";
+}
+
+function labelForCheckStatus(status: CheckResult["status"]): string {
+  if (status === "pass") return "Pass";
+  if (status === "fail") return "Fail";
+  return "Not checked";
+}
+
 function labelForRole(role: string): string {
   if (role === "main") return "Main planner";
   if (role === "pro") return "Pro perspective";
-  return "Contra perspective";
+  if (role === "contra") return "Contra perspective";
+  if (role === "main_summary") return "Main summary";
+  return role.replace(/_/g, " ");
 }
 
 function formatPerspective(value: string): string {

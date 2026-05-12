@@ -89,11 +89,11 @@ type NewsResearchArticle = {
   error: string | null;
 };
 
-export type NewsResearchAgentRole = "main" | "pro" | "contra";
+export type NewsResearchAgentRole = "main" | "pro" | "contra" | "main_summary";
 
 export type NewsResearchPromptBinding = {
   role: NewsResearchAgentRole;
-  perspective: "planner" | "supports_article" | "challenges_article";
+  perspective: "planner" | "supports_article" | "challenges_article" | "compares_perspectives";
   provider: string;
   model: string;
   systemPrompt: string;
@@ -126,7 +126,7 @@ type NewsResearchOutputHashes = {
   proAnalysisSha256: Sha256;
   contraAnalysisSha256: Sha256;
   mainSummarySha256: Sha256;
-  summaryAlgorithm: "composeResearchSummary/v1";
+  summaryAlgorithm: "mainAgentSummary/v1";
 };
 
 export type NewsResearchManifest = {
@@ -169,6 +169,80 @@ export type NewsResearchResponse = {
   manifest: NewsResearchManifest;
   signature: `0x${string}`;
   raw: NewsResearchRaw | null;
+};
+
+export type NewsResearchQueueJobStatus = "queued" | "running" | "succeeded" | "failed";
+
+export type NewsResearchQueueError = {
+  error: string;
+  message: string;
+  requestId: string;
+  retryable: boolean;
+  article?: NewsResearchArticle;
+};
+
+export type NewsResearchQueueJob = {
+  id: string;
+  requestId: string;
+  articleUrl: string;
+  status: NewsResearchQueueJobStatus;
+  position: number | null;
+  createdAt: string;
+  updatedAt: string;
+  startedAt: string | null;
+  finishedAt: string | null;
+  result: NewsResearchResponse | null;
+  error: NewsResearchQueueError | null;
+};
+
+export type NewsResearchQueueSummary = {
+  queued: number;
+  running: number;
+  succeeded: number;
+  failed: number;
+  active: number;
+  total: number;
+  concurrency: number;
+  maxJobs: number;
+  storage: "memory" | "file";
+};
+
+export type NewsResearchQueueEnqueueResponse = {
+  jobs: NewsResearchQueueJob[];
+  queue: NewsResearchQueueSummary;
+};
+
+export type NewsResearchQueueListResponse = {
+  jobs: NewsResearchQueueJob[];
+  queue: NewsResearchQueueSummary;
+};
+
+export type ResearchHistoryEntry = {
+  id: string;
+  articleUrl: string;
+  resolvedArticleUrl: string;
+  normalizedArticleUrl: string;
+  articleHost: string;
+  manifestSha256: Sha256;
+  articleContentSha256: Sha256 | null;
+  fetchedAt: string | null;
+  researchedAt: string;
+  savedAt: string;
+  updatedAt: string;
+  byteLength: number;
+  summaryPreview: string;
+};
+
+export type ResearchStorageInfo = {
+  reportsPath: string;
+  persistentDataPath: string;
+  source: "research_storage_dir" | "user_persistent_data_path" | "eigen_default" | "local_dev";
+  docsUrl: string;
+};
+
+export type ResearchHistoryResponse = {
+  entries: ResearchHistoryEntry[];
+  storage: ResearchStorageInfo;
 };
 
 export type StructuredModelOutput = {

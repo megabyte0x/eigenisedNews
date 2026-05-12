@@ -9,6 +9,9 @@ import type {
   NewsResearchRaw,
   NewsResearchRawAgentOutput,
   NewsResearchResponse,
+  ResearchHistoryEntry,
+  ResearchHistoryResponse,
+  ResearchStorageInfo,
   RawModelOutput,
   SynthesizeResponse,
 } from "../types";
@@ -34,6 +37,15 @@ export function isNewsResearchResponse(value: unknown): value is NewsResearchRes
     isResearchManifest(value.manifest) &&
     isHexSignature(value.signature) &&
     (value.raw === null || isNewsResearchRaw(value.raw))
+  );
+}
+
+export function isResearchHistoryResponse(value: unknown): value is ResearchHistoryResponse {
+  return (
+    isUnknownRecord(value) &&
+    Array.isArray(value.entries) &&
+    value.entries.every(isResearchHistoryEntry) &&
+    isResearchStorageInfo(value.storage)
   );
 }
 
@@ -100,7 +112,7 @@ export function isRawModelOutput(value: unknown): value is RawModelOutput {
 }
 
 function isDeploymentEnvironment(value: unknown): value is Manifest["deployment"]["environment"] {
-  return value === "mainnet-alpha" || value === "local";
+  return value === "mainnet-alpha" || value === "sepolia" || value === "local";
 }
 
 function isRequestRecord(value: unknown): value is Manifest["request"] {
@@ -140,6 +152,40 @@ function isNewsResearchResponseBody(value: UnknownRecord): value is UnknownRecor
   );
 }
 
+function isResearchHistoryEntry(value: unknown): value is ResearchHistoryEntry {
+  return (
+    isUnknownRecord(value) &&
+    typeof value.id === "string" &&
+    typeof value.articleUrl === "string" &&
+    typeof value.resolvedArticleUrl === "string" &&
+    typeof value.normalizedArticleUrl === "string" &&
+    typeof value.articleHost === "string" &&
+    typeof value.manifestSha256 === "string" &&
+    (typeof value.articleContentSha256 === "string" || value.articleContentSha256 === null) &&
+    (typeof value.fetchedAt === "string" || value.fetchedAt === null) &&
+    typeof value.researchedAt === "string" &&
+    typeof value.savedAt === "string" &&
+    typeof value.updatedAt === "string" &&
+    typeof value.byteLength === "number" &&
+    typeof value.summaryPreview === "string"
+  );
+}
+
+function isResearchStorageInfo(value: unknown): value is ResearchStorageInfo {
+  return (
+    isUnknownRecord(value) &&
+    typeof value.reportsPath === "string" &&
+    typeof value.persistentDataPath === "string" &&
+    (
+      value.source === "research_storage_dir" ||
+      value.source === "user_persistent_data_path" ||
+      value.source === "eigen_default" ||
+      value.source === "local_dev"
+    ) &&
+    typeof value.docsUrl === "string"
+  );
+}
+
 function isNewsResearchArticle(value: unknown): value is NewsResearchResponse["article"] {
   return (
     isUnknownRecord(value) &&
@@ -155,7 +201,7 @@ function isNewsResearchPromptBinding(value: unknown): value is NewsResearchPromp
   return (
     isUnknownRecord(value) &&
     isNewsResearchAgentRole(value.role) &&
-    (value.perspective === "planner" || value.perspective === "supports_article" || value.perspective === "challenges_article") &&
+    (value.perspective === "planner" || value.perspective === "supports_article" || value.perspective === "challenges_article" || value.perspective === "compares_perspectives") &&
     typeof value.provider === "string" &&
     typeof value.model === "string" &&
     typeof value.systemPrompt === "string" &&
@@ -199,7 +245,7 @@ function isNewsResearchOutputHashes(value: unknown): value is NewsResearchManife
     typeof value.proAnalysisSha256 === "string" &&
     typeof value.contraAnalysisSha256 === "string" &&
     typeof value.mainSummarySha256 === "string" &&
-    value.summaryAlgorithm === "composeResearchSummary/v1"
+    value.summaryAlgorithm === "mainAgentSummary/v1"
   );
 }
 
@@ -215,7 +261,7 @@ function isNewsResearchRawAgentOutput(value: unknown): value is NewsResearchRawA
 }
 
 function isNewsResearchAgentRole(value: unknown): value is NewsResearchAgentRole {
-  return value === "main" || value === "pro" || value === "contra";
+  return value === "main" || value === "pro" || value === "contra" || value === "main_summary";
 }
 
 function isModelRun(value: unknown): value is ModelRun {

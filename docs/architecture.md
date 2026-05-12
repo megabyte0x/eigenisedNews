@@ -7,6 +7,7 @@ eigenisedNews is a single Express application that serves:
 - a browser UI at `GET /`
 - a health endpoint at `GET /healthz`
 - the primary article-research API at `POST /research`
+- the persisted research history API at `GET /research/history` and `GET /research/history/:id`
 - the paid agent article-research API at `POST /api/research`
 - the secondary signed-synthesis API at `POST /synthesize`
 - agent discovery/audit endpoints at `GET /openapi.json`, `GET /.well-known/x402`, `GET /verify`, and `GET /skill.md`
@@ -67,7 +68,11 @@ Failure modes:
 
 Failure responses are structured as `{ error, message, requestId, retryable }` plus article metadata when a fetch failure has an identified source.
 
-Success returns article metadata, prompts, perspective analyses, summary, prompt/build provenance, agent-run diagnostics, a signed research manifest, and optional raw audit data. `promptBindings` exposes the visible main/pro/contra system prompts plus system/full prompt hashes; `verifiableBuild` exposes deployment metadata and prompt source links.
+Success returns article metadata, prompts, perspective analyses, a main-agent comparison summary, prompt/build provenance, agent-run diagnostics, a signed research manifest, and optional raw audit data. `promptBindings` exposes the visible main planner/pro/contra/main-summary system prompts plus system/full prompt hashes; `verifiableBuild` exposes deployment metadata and prompt source links.
+
+Successful `/research` and paid `/api/research` reports are saved through `src/storage/researchStore.ts`. The store keys reports by a normalized submitted article URL (lowercase host, no fragment, sorted query params) so duplicate links return the persisted report without rerunning fetch/model stages. History routes return a lightweight index and full report detail; the `?include=raw` query controls whether stored raw prompts/outputs are returned.
+
+Queued batch research is exposed at `POST /research/jobs`, `GET /research/jobs`, and `GET /research/jobs/:jobId`. Queue concurrency defaults to `1` to preserve the sequential Eigen gateway/JWT constraint, can persist job state with `RESEARCH_QUEUE_STORE_PATH`, and saves successful results to the same persistent report store when available.
 
 ## `POST /api/research`
 
@@ -78,6 +83,8 @@ Discovery and support endpoints:
 - `GET /openapi.json` for OpenAPI 3.1 route/payment metadata
 - `GET /.well-known/x402` for x402 resource discovery
 - `GET /verify` for deployment and public payment metadata
+- `POST/GET /research/jobs` and `GET /research/jobs/:jobId` for queued batch research
+- `GET /research/history` and `GET /research/history/:id` for persisted report list/detail
 - `GET /skill.md` for external agent setup instructions
 
 ## `POST /synthesize`
@@ -115,15 +122,16 @@ The article research path lives in `runArticleResearch` inside `src/pipeline.ts`
 6. Parse the planner output into `proPrompt` and `contraPrompt`.
 7. Run the pro stage.
 8. Run the contra stage.
-9. Bind each stage to prompt provenance (`systemPromptSha256`, exact `promptHash`, article hash, generated research prompt).
-10. Attach deployment metadata (`appId`, `imageDigest`, `commitSha`, dashboard/source URLs).
-11. Compose the returned summary deterministically from pro/contra outputs.
-12. Build and sign a research manifest containing article, prompt, output, run, and deployment hashes.
-13. Include raw planner/pro/contra prompts and outputs only when the HTTP caller requests `?include=raw`.
+9. Run the main-summary stage with the pro and contra analyses plus their extracted final verdicts.
+10. Bind each stage to prompt provenance (`systemPromptSha256`, exact `promptHash`, article hash, generated research prompt).
+11. Attach deployment metadata (`appId`, `imageDigest`, `commitSha`, dashboard/source URLs).
+12. Persist the full signed report to the configured research store after success.
+13. Build and sign a research manifest containing article, prompt, output, run, and deployment hashes.
+14. Include raw planner/pro/contra/summary prompts and outputs only when the HTTP caller requests `?include=raw`.
 
 ### Important constraint
 
-This pipeline uses `POLICY.MODEL_SET[0]` for the planner, pro, and contra stages. It is not a three-model fan-out path.
+This pipeline uses `POLICY.MODEL_SET[0]` for the planner, pro, contra, and main-summary stages. It is not a three-model fan-out path.
 
 ## Secondary pipeline: `/synthesize`
 

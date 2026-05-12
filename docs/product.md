@@ -26,7 +26,7 @@ The `/research` response includes:
 - `proAnalysis`
 - `contraAnalysis`
 - `mainSummary`
-- `promptBindings` for the main, pro, and contra agents, including each visible system prompt, system-prompt hash, exact full-prompt hash, article URL/content hash, and generated research prompt when applicable
+- `promptBindings` for the main planner, pro, contra, and main-summary stages, including each visible system prompt, system-prompt hash, exact full-prompt hash, article URL/content hash, and generated research prompt when applicable
 - `verifiableBuild` metadata (`appId`, `agentAddress`, `imageDigest`, `commitSha`, environment, EigenCloud dashboard URL, and prompt source path/URL)
 - `agentRuns`
 - a signed `manifest`, `signature`, and `raw` audit payload when requested with `?include=raw`
@@ -41,7 +41,7 @@ Most article-analysis tools either summarize one article or compare multiple sou
 
 ### One source of truth per request
 
-The `/research` pipeline fetches one article URL once and then reuses that same prepared context for the planner, pro, and contra stages.
+The `/research` pipeline fetches one article URL once and then reuses that same prepared context for the planner, pro, contra, and main-summary stages.
 
 Article access is resilient to publisher-blocking failures: when `FIRECRAWL_API_KEY` is configured, the fetcher tries Firecrawl `/v2/scrape` first for clean article markdown, then falls back to bounded direct HTTP if Firecrawl is unavailable or returns no usable content. Without a Firecrawl key, the pipeline uses direct HTTP only.
 
@@ -56,28 +56,35 @@ Before the model prompts are built, the article content is normalized into resea
 
 This keeps the research prompt grounded in what a reader would recognize as the article, not in raw page chrome.
 
-### Three-stage orchestration
+### Four-stage orchestration
 
 The product uses a planner-first sequence:
 
 1. **Main/planner stage** generates a pair of prompts.
 2. **Pro stage** supports the article’s framing using the shared context.
 3. **Contra stage** challenges or complicates that framing using the same context.
+4. **Main-summary stage** reads the pro and contra outputs, explicitly considers their final verdicts, and produces a quick reader-facing comparison of similarities, divergences, and the bottom line.
 
-The returned `mainSummary` is then composed from the two perspective outputs.
+The returned `mainSummary` is the main agent’s comparison summary, not a deterministic concatenation of the two perspective outputs.
 
 ### Signed provenance and build binding
 
 The research response makes the different perspectives inspectable instead of hiding them in logs. Each successful response includes a signed research manifest that binds:
 
-- the system prompt for the main planner, pro agent, and contra agent
+- the system prompt for the main planner, pro agent, contra agent, and main-summary stage
 - the generated pro/contra research prompt
 - the system-prompt hash and the full prompt hash recorded in `agentRuns`
 - article content hash reuse across both perspectives
-- output hashes for pro analysis, contra analysis, and the deterministic summary
+- output hashes for pro analysis, contra analysis, and the main-agent summary
 - EigenCompute build metadata and links to the app dashboard / prompt source when deployment metadata is available
 
-The UI shows this in the **Perspective provenance** panel and exposes a signed research package for verifier workflows.
+The UI shows this in the **Perspective provenance** panel and exposes browser verification for verifier workflows.
+
+The **Verification guide** card explains the proof in product language: verification does not decide which opinion is correct; it proves the article binding, prompt binding, raw agent inputs/outputs when included, manifest signature, and EigenCompute build provenance. Readers can click **Verify this result** to run the checks through `POST /verify` in the browser without downloading a JSON file or running a terminal command. The “Verify build” dashboard link is styled as a primary proof action, while missing commit/image metadata is called out as “not provided” instead of a misleading `unknown` label.
+
+The **Previous researched articles** library lists saved reports from the server-side persistent store. Clicking an entry loads that signed report directly into the reader, and duplicate submitted links reuse the stored report rather than creating another agent run.
+
+The queue API (`POST /research/jobs`) accepts one or more article URLs for batch processing. It runs jobs sequentially by default, exposes job status/result endpoints, and writes successful queued reports into the same persistent history.
 
 ## Paid agent workflow
 
@@ -87,7 +94,7 @@ Agents call `POST /api/research` with the same JSON body as `/research`:
 { "articleUrl": "https://example.com/news/story" }
 ```
 
-Unpaid requests return `402 Payment Required` with both x402 and MPP challenges. After payment, clients retry the same request and receive the normal signed research response. Agents can inspect `GET /openapi.json`, `GET /.well-known/x402`, `GET /verify`, and `GET /skill.md` before paying.
+Unpaid requests return `402 Payment Required` with both x402 and MPP challenges. After payment, clients retry the same request and receive the normal signed research response. Agents can inspect `GET /openapi.json`, `GET /.well-known/x402`, `GET /verify`, and `GET /skill.md` before paying. `GET /verify` includes a public explanation of the research verifier checks, persistent history endpoints, and whether commit/image build metadata is present.
 
 ## Secondary workflow: signed synthesis console
 

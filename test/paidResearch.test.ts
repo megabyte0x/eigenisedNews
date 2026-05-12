@@ -3,6 +3,7 @@ import request from "supertest";
 import { privateKeyToAccount, generatePrivateKey } from "viem/accounts";
 import { buildApp } from "../src/index";
 import type { RunSynthesisDeps } from "../src/pipeline";
+import { makeGoodResearchResponse } from "./helpers/verifierFixture";
 
 const FIXED_TS = "2026-04-27T12:00:00.000Z";
 const TEST_WALLET = "0x1111111111111111111111111111111111111111";
@@ -66,8 +67,9 @@ function makeDeps(overrides: Partial<RunSynthesisDeps> = {}): RunSynthesisDeps {
           latencyMs: 5,
         };
       }
-      if (prompt.includes("Support the article")) return { rawOutput: "For: earnings evidence supports the article.", latencyMs: 5 };
-      return { rawOutput: "Against: governance timing challenges the article.", latencyMs: 5 };
+      if (prompt.includes("Support the article")) return { rawOutput: "For: earnings evidence supports the article.\nVerdict: supportive.", latencyMs: 5 };
+      if (prompt.includes("Challenge the article")) return { rawOutput: "Against: governance timing challenges the article.\nVerdict: cautionary.", latencyMs: 5 };
+      return { rawOutput: "Similarities: both address earnings and governance.\n\nDivergences: pro emphasizes earnings while contra emphasizes governance timing.\n\nBottom line: the article is plausible but caveated.", latencyMs: 5 };
     },
     now: () => FIXED_TS,
     deployment: {
@@ -168,7 +170,29 @@ describe("dual402 paid research API", () => {
       expect(res.body.payment.x402.payee).toBe(TEST_WALLET);
       expect(res.body.payment.mpp.recipient).toBe(TEST_WALLET);
       expect(res.body.runtime.dashboardUrl).toBe("https://verify-sepolia.eigencloud.xyz/app/0xapp");
+      expect(res.body.verification.meaning).toContain("does not decide which perspective is true");
+      expect(res.body.verification.checks.map((check: { name: string }) => check.name)).toContain("verifiable_build");
+      expect(res.body.verification.researchPackage.browserVerify).toEqual({ method: "POST", endpoint: "/verify", body: "{ response: <research response> }" });
+      expect(res.body.verification.metadataStatus).toMatchObject({ commit: "available", imageDigest: "available" });
+      expect(JSON.stringify(res.body)).not.toContain("verify-manifest.ts");
       expect(JSON.stringify(res.body)).not.toContain(TEST_MPP_SECRET);
+    });
+  });
+
+  test("POST /verify runs browser verification without a downloaded file", async () => {
+    await withPaymentEnv(PAYMENT_ENV, async () => {
+      const app = buildApp(makeDeps());
+      const response = await makeGoodResearchResponse();
+      const res = await request(app)
+        .post("/verify")
+        .send({ response });
+
+      expect(res.status).toBe(200);
+      expect(res.body.ok).toBe(true);
+      expect(res.body.mode).toBe("browser");
+      expect(res.body.summary.title).toBe("Verified in browser");
+      expect(res.body.summary.explanation).toContain("no terminal or file download");
+      expect(res.body.checks.map((check: { label: string }) => check.label)).toContain("Exact agent run");
     });
   });
 

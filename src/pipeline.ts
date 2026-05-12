@@ -76,6 +76,14 @@ const RESEARCH_CONTRA_SYSTEM_PROMPT = [
   "Keep the answer concise: at most 6 bullets plus one short verdict, under 500 words total.",
 ].join("\n");
 
+const RESEARCH_SUMMARY_SYSTEM_PROMPT = [
+  "You are the main news research agent for eigenisedNews.",
+  "You have already assigned pro and contra agents. Now write the final reader-facing summary from their analyses and final verdicts.",
+  "Focus on a quick pro-vs-contra synthesis: where the two takes are similar, where they diverge, and the practical bottom line for the article.",
+  "Do not add outside facts or claims that are not present in the supplied pro/contra outputs.",
+  "Keep the answer under 250 words in markdown with clear sections for Similarities, Divergences, and Bottom line.",
+].join("\n");
+
 type ValidationError = "topic_required" | "topic_too_long" | "no_inputs" | "too_many_inputs";
 
 function validate(req: SynthesizeRequest): ValidationError | null {
@@ -334,13 +342,47 @@ export async function runArticleResearch(deps: RunSynthesisDeps, request: NewsRe
     error: null,
   });
 
-  const mainSummary = composeResearchSummary(proRaw.rawOutput, contraRaw.rawOutput);
+  const summaryPrompt = renderResearchSummaryPrompt(article.url, proRaw.rawOutput, contraRaw.rawOutput);
+  const summaryPromptHash = sha256Hex(summaryPrompt);
+  promptBindings.push(buildResearchPromptBinding({
+    role: "main_summary",
+    provider: spec.provider,
+    model: spec.model,
+    systemPrompt: RESEARCH_SUMMARY_SYSTEM_PROMPT,
+    promptHash: summaryPromptHash,
+    articleUrl: article.url,
+    articleContentSha256: article.contentSha256,
+    researchPrompt: null,
+  }));
+  const summaryRaw = await callResearchAgent(deps, {
+    requestId,
+    stage: "main_summary",
+    provider: spec.provider,
+    model: spec.model,
+    prompt: summaryPrompt,
+    promptHash: summaryPromptHash,
+    timeoutMs: POLICY.RESEARCH_LLM_TIMEOUT_MS,
+    maxOutputTokens: POLICY.RESEARCH_LLM_MAX_OUTPUT_TOKENS,
+  });
+  const summaryRawOutputSha256 = sha256Hex(summaryRaw.rawOutput);
+  agentRuns.push({
+    role: "main_summary",
+    provider: spec.provider,
+    model: spec.model,
+    status: "ok",
+    promptHash: summaryPromptHash,
+    rawOutputSha256: summaryRawOutputSha256,
+    error: null,
+  });
+
+  const mainSummary = summaryRaw.rawOutput;
   const verifiableBuild = buildResearchVerifiableBuild(deps.deployment);
   const raw: NewsResearchRaw = {
     agentOutputs: [
       buildResearchRawAgentOutput("main", spec.provider, spec.model, plannerPrompt, plannerRaw.rawOutput),
       buildResearchRawAgentOutput("pro", spec.provider, spec.model, proPrompt, proRaw.rawOutput),
       buildResearchRawAgentOutput("contra", spec.provider, spec.model, contraPrompt, contraRaw.rawOutput),
+      buildResearchRawAgentOutput("main_summary", spec.provider, spec.model, summaryPrompt, summaryRaw.rawOutput),
     ],
     mainSummary,
   };
@@ -355,8 +397,8 @@ export async function runArticleResearch(deps: RunSynthesisDeps, request: NewsRe
       contraPromptSha256: sha256Hex(prompts.contraPrompt),
       proAnalysisSha256: proRawOutputSha256,
       contraAnalysisSha256: contraRawOutputSha256,
-      mainSummarySha256: sha256Hex(mainSummary),
-      summaryAlgorithm: "composeResearchSummary/v1",
+      mainSummarySha256: summaryRawOutputSha256,
+      summaryAlgorithm: "mainAgentSummary/v1",
     },
     timestamp: deps.now(),
   });
@@ -423,7 +465,9 @@ function buildResearchRawAgentOutput(
 
 function researchPerspectiveForRole(role: NewsResearchAgentRole): NewsResearchPromptBinding["perspective"] {
   if (role === "main") return "planner";
-  return role === "pro" ? "supports_article" : "challenges_article";
+  if (role === "pro") return "supports_article";
+  if (role === "contra") return "challenges_article";
+  return "compares_perspectives";
 }
 
 function buildResearchVerifiableBuild(deployment: Manifest["deployment"]): NewsResearchVerifiableBuild {
@@ -450,7 +494,7 @@ function dashboardUrlForEnvironment(environment: Manifest["deployment"]["environ
 
 async function callResearchAgent(
   deps: RunSynthesisDeps,
-  args: { requestId: string; stage: "main" | "pro" | "contra"; provider: string; model: string; prompt: string; promptHash: Sha256; timeoutMs: number; maxOutputTokens: number },
+  args: { requestId: string; stage: NewsResearchAgentRole; provider: string; model: string; prompt: string; promptHash: Sha256; timeoutMs: number; maxOutputTokens: number },
 ): Promise<{ rawOutput: string; latencyMs: number }> {
   const startedAt = Date.now();
   log("info", "research_stage_started", {
@@ -627,6 +671,21 @@ function renderPerspectiveResearchPrompt(role: "pro" | "contra", researchPrompt:
   ].join("\n\n");
 }
 
+function renderResearchSummaryPrompt(articleUrl: string, proAnalysis: string, contraAnalysis: string): string {
+  return [
+    RESEARCH_SUMMARY_SYSTEM_PROMPT,
+    `Article URL: ${articleUrl}`,
+    "Pro final verdict:",
+    extractFinalVerdict(proAnalysis),
+    "Contra final verdict:",
+    extractFinalVerdict(contraAnalysis),
+    "Full pro analysis:",
+    proAnalysis,
+    "Full contra analysis:",
+    contraAnalysis,
+  ].join("\n\n");
+}
+
 export function parseResearchPrompts(rawOutput: string): { proPrompt: string; contraPrompt: string } {
   let parsed: unknown;
   try {
@@ -655,6 +714,15 @@ function isResearchPromptObject(value: unknown): value is { proPrompt: string; c
     && value.contraPrompt.trim().length > 0;
 }
 
-export function composeResearchSummary(proAnalysis: string, contraAnalysis: string): string {
-  return ["For the article:", proAnalysis, "", "Against the article:", contraAnalysis].join("\n");
+function extractFinalVerdict(analysis: string): string {
+  const lines = analysis
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+  const verdictLine = [...lines].reverse().find((line) => /\bverdict\b/i.test(line));
+  return compactResearchPrompt(stripListMarker(verdictLine ?? lines.at(-1) ?? analysis));
+}
+
+function stripListMarker(line: string): string {
+  return line.replace(/^(?:[-*•]|\d+[.)])\s+/, "").trim();
 }

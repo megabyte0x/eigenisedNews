@@ -33,12 +33,40 @@ The runtime also reads deployment-facing metadata from environment variables suc
 
 Those values feed the signed manifest deployment section for `/synthesize` responses.
 
+To avoid user-facing “unknown” build labels, set `EIGEN_COMMIT_SHA` and `EIGEN_IMAGE_DIGEST` during deployment whenever the platform does not inject them. The runtime also accepts common build-system aliases for commit/image metadata (`ECLOUD_COMMIT_SHA`, `GIT_COMMIT_SHA`, `SOURCE_COMMIT`, `COMMIT_SHA`, `VERCEL_GIT_COMMIT_SHA`, `GITHUB_SHA`, `ECLOUD_IMAGE_DIGEST`, `IMAGE_DIGEST`, `CONTAINER_IMAGE_DIGEST`, and `DOCKER_IMAGE_DIGEST`) before falling back to `unknown`.
+
+### Persistent research storage
+
+EigenCompute persistent storage is exposed to workloads at `USER_PERSISTENT_DATA_PATH` and currently resolves to `/mnt/disks/userdata` per the EigenCompute persistent storage guide. The app writes saved article reports under:
+
+```text
+$USER_PERSISTENT_DATA_PATH/eigenised-news/research-reports
+```
+
+If `USER_PERSISTENT_DATA_PATH` is absent but `EIGEN_ENVIRONMENT` is `sepolia` or `mainnet-alpha`, the app falls back to `/mnt/disks/userdata/eigenised-news/research-reports`. Local development uses `.data/eigenised-news/research-reports`, and tests/operators may override with `RESEARCH_STORAGE_DIR`.
+
+The stored reports back:
+
+- duplicate URL reuse before the fetch/model pipeline runs
+- `GET /research/history` for the previous-article index
+- `GET /research/history/:id?include=raw` for loading a full saved report into the UI
+- successful `POST /research/jobs` queue results when the queue finishes a job
+
+The queue itself can also persist job state separately when `RESEARCH_QUEUE_STORE_PATH` points at a JSON file on the persistent storage mount, for example `/mnt/disks/userdata/eigenised-news/research-queue.json`.
+
+See the EigenCompute persistent storage docs: <https://docs.eigencloud.xyz/eigencompute/howto/build/persistent_storage>.
+
 ## Repo-specific EigenCompute contract
 
 The deployment shape in this repo is declared in `eigencompute.yaml`:
 
 - `POST /api/research`
 - `POST /research`
+- `POST /research/jobs`
+- `GET /research/jobs`
+- `GET /research/jobs/:jobId`
+- `GET /research/history`
+- `GET /research/history/:id`
 - `POST /synthesize`
 - `GET /openapi.json`
 - `GET /.well-known/x402`

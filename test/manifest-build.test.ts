@@ -24,7 +24,7 @@ const baseResearchInput = (): BuildResearchManifestInput => ({
     proAnalysisSha256: "sha256:pro",
     contraAnalysisSha256: "sha256:contra",
     mainSummarySha256: "sha256:summary",
-    summaryAlgorithm: "composeResearchSummary/v1",
+    summaryAlgorithm: "mainAgentSummary/v1",
   },
   timestamp: "2026-04-27T12:00:00.000Z",
 });

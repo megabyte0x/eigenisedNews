@@ -3,7 +3,7 @@ import request from "supertest";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { buildApp, readDeploymentEnvironment } from "../src/index";
+import { buildApp, readDeployment, readDeploymentEnvironment } from "../src/index";
 import { loadDotEnvFile } from "../src/lib/env";
 
 describe("GET /healthz", () => {
@@ -44,6 +44,24 @@ describe("GET /healthz", () => {
   test("local fallback stays local when no explicit env is present", () => {
     expect(readDeploymentEnvironment(undefined)).toBe("local");
     expect(readDeploymentEnvironment("   ")).toBe("local");
+  });
+
+  test("deployment metadata accepts common build-system aliases before falling back to unknown", () => {
+    const deployment = readDeployment("0xfallback", {
+      EIGEN_ENVIRONMENT: "sepolia",
+      EIGEN_APP_ID: "0xapp",
+      AGENT_ID: "0xagent",
+      GITHUB_SHA: "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+      IMAGE_DIGEST: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    } as NodeJS.ProcessEnv);
+
+    expect(deployment).toMatchObject({
+      appId: "0xapp",
+      agentAddress: "0xagent",
+      environment: "sepolia",
+      commitSha: "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+      imageDigest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    });
   });
 
   test("loads AGENT_PRIVATE_KEY from a local .env file without overriding explicit env", () => {

@@ -35,8 +35,9 @@ export async function makeGoodResearchResponse(): Promise<NewsResearchResponse> 
           latencyMs: 5,
         };
       }
-      if (calls === 2) return { rawOutput: "Pro: earnings beat expectations.", latencyMs: 5 };
-      return { rawOutput: "Contra: executive stock sales weaken the article's framing.", latencyMs: 5 };
+      if (calls === 2) return { rawOutput: "Pro: earnings beat expectations.\nVerdict: supportive.", latencyMs: 5 };
+      if (calls === 3) return { rawOutput: "Contra: executive stock sales weaken the article's framing.\nVerdict: cautionary.", latencyMs: 5 };
+      return { rawOutput: "Similarities: both evaluate the earnings story.\n\nDivergences: pro emphasizes the beat while contra emphasizes stock-sale timing.\n\nBottom line: the article is supported but caveated.", latencyMs: 5 };
     },
     now: () => FIXED_TS,
     deployment: {

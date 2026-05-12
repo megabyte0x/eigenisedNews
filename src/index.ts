@@ -8,9 +8,12 @@ import { callModel, type CallErrorDebugInfo } from "./fanout/llmProxy";
 import { renderFrontendShell } from "./frontend/shell";
 import { mountPaidResearchApi, PAID_RESEARCH_PATH } from "./http/paidResearch";
 import { makeResearchHandler } from "./http/research";
+import { mountResearchHistoryRoutes } from "./http/researchHistory";
+import { mountResearchQueueApi, RESEARCH_QUEUE_PATH } from "./http/researchQueue";
 import { makeSynthesizeHandler } from "./http/synthesize";
 import type { ManifestSigner } from "./manifest/sign";
 import type { RunSynthesisDeps } from "./pipeline";
+import { createResearchReportStore } from "./storage/researchStore";
 import type { Manifest } from "./types";
 import { loadDotEnvFile } from "./lib/env";
 import { isUnknownRecord } from "./lib/guards";
@@ -18,15 +21,33 @@ import { log } from "./lib/log";
 
 loadDotEnvFile();
 
-function readDeployment(fallbackAddress: `0x${string}`): Manifest["deployment"] {
-  const env = readDeploymentEnvironment(process.env.EIGEN_ENVIRONMENT);
+const COMMIT_SHA_ENV_KEYS = [
+  "EIGEN_COMMIT_SHA",
+  "ECLOUD_COMMIT_SHA",
+  "GIT_COMMIT_SHA",
+  "SOURCE_COMMIT",
+  "COMMIT_SHA",
+  "VERCEL_GIT_COMMIT_SHA",
+  "GITHUB_SHA",
+] as const;
+
+const IMAGE_DIGEST_ENV_KEYS = [
+  "EIGEN_IMAGE_DIGEST",
+  "ECLOUD_IMAGE_DIGEST",
+  "IMAGE_DIGEST",
+  "CONTAINER_IMAGE_DIGEST",
+  "DOCKER_IMAGE_DIGEST",
+] as const;
+
+export function readDeployment(fallbackAddress: `0x${string}`, envVars: NodeJS.ProcessEnv = process.env): Manifest["deployment"] {
+  const env = readDeploymentEnvironment(envVars.EIGEN_ENVIRONMENT);
   const h = hostname();
   const appIdFromHost = h.startsWith("tee-0x") ? h.slice(4) : null;
   return {
-    appId: process.env.EIGEN_APP_ID ?? appIdFromHost ?? "local",
-    agentAddress: (process.env.AGENT_ID ?? fallbackAddress).toLowerCase(),
-    imageDigest: process.env.EIGEN_IMAGE_DIGEST ?? "unknown",
-    commitSha: process.env.EIGEN_COMMIT_SHA ?? "unknown",
+    appId: envVars.EIGEN_APP_ID ?? appIdFromHost ?? "local",
+    agentAddress: (envVars.AGENT_ID ?? fallbackAddress).toLowerCase(),
+    imageDigest: firstNonEmptyEnv(envVars, IMAGE_DIGEST_ENV_KEYS) ?? "unknown",
+    commitSha: firstNonEmptyEnv(envVars, COMMIT_SHA_ENV_KEYS) ?? "unknown",
     environment: env,
   };
 }
@@ -51,6 +72,14 @@ function readSigner(): { sign: ManifestSigner; address: `0x${string}` } {
   // EigenCompute injects MNEMONIC; derive at m/44'/60'/0'/0/0 to match the address shown by `ecloud compute app info`.
   const account = mnemonicToAccount(mnemonic, { addressIndex: 0 });
   return { sign: (h) => account.signMessage({ message: h }), address: account.address };
+}
+
+function firstNonEmptyEnv(envVars: NodeJS.ProcessEnv, keys: readonly string[]): string | null {
+  for (const key of keys) {
+    const value = envVars[key]?.trim();
+    if (value) return value;
+  }
+  return null;
 }
 
 function buildProductionDeps(): RunSynthesisDeps {
@@ -134,17 +163,21 @@ export function buildApp(depsOverride?: RunSynthesisDeps): Express {
   app.get("/", (_req, res) => {
     res.type("html").send(renderFrontendShell(readFrontendRuntimeConfig()));
   });
+  const researchStore = createResearchReportStore(process.env);
+  mountResearchHistoryRoutes(app, researchStore);
 
   if (depsOverride !== undefined) {
     assertRunSynthesisDeps(depsOverride);
-    app.post("/research", makeResearchHandler(depsOverride));
+    app.post("/research", makeResearchHandler(depsOverride, { store: researchStore }));
+    mountResearchQueueApi(app, depsOverride, { store: researchStore });
     app.post("/synthesize", makeSynthesizeHandler(depsOverride));
-    mountPaidResearchApi(app, depsOverride);
+    mountPaidResearchApi(app, depsOverride, process.env, { researchStore });
   } else if (process.env.NODE_ENV !== "test") {
     const productionDeps = buildProductionDeps();
-    app.post("/research", makeResearchHandler(productionDeps));
+    app.post("/research", makeResearchHandler(productionDeps, { store: researchStore }));
+    mountResearchQueueApi(app, productionDeps, { store: researchStore });
     app.post("/synthesize", makeSynthesizeHandler(productionDeps));
-    mountPaidResearchApi(app, productionDeps);
+    mountPaidResearchApi(app, productionDeps, process.env, { researchStore });
   }
   return app;
 }
@@ -166,6 +199,10 @@ function resolveStaticDir(): string | null {
 function isCorsPreflightPath(path: string): boolean {
   return path === "/synthesize"
     || path === "/research"
+    || path === "/research/history"
+    || path.startsWith("/research/history/")
+    || path === RESEARCH_QUEUE_PATH
+    || path.startsWith(`${RESEARCH_QUEUE_PATH}/`)
     || path === PAID_RESEARCH_PATH
     || path === "/openapi.json"
     || path === "/.well-known/x402"

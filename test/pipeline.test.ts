@@ -205,8 +205,9 @@ describe("runArticleResearch", () => {
             latencyMs: 5,
           };
         }
-        if (callPrompts.length === 2) return { rawOutput: "Pro: earnings beat expectations.", latencyMs: 5 };
-        return { rawOutput: "Contra: executive stock sales weaken the article's framing.", latencyMs: 5 };
+        if (callPrompts.length === 2) return { rawOutput: "Pro: earnings beat expectations.\nVerdict: supportive.", latencyMs: 5 };
+        if (callPrompts.length === 3) return { rawOutput: "Contra: executive stock sales weaken the article's framing.\nVerdict: complicating.", latencyMs: 5 };
+        return { rawOutput: "Similarities: both discuss the earnings story.\n\nDivergences: pro emphasizes the beat while contra emphasizes stock sales.\n\nBottom line: the article is directionally supported but needs caveats.", latencyMs: 5 };
       },
     });
 
@@ -219,26 +220,35 @@ describe("runArticleResearch", () => {
     expect(result.contraPrompt).toContain("challenges");
     expect(result.proAnalysis).toContain("earnings beat");
     expect(result.contraAnalysis).toContain("stock sales");
-    expect(result.agentRuns.map((run) => run.role)).toEqual(["main", "pro", "contra"]);
-    expect(result.promptBindings.map((binding) => binding.role)).toEqual(["main", "pro", "contra"]);
+    expect(result.mainSummary).toContain("Divergences");
+    expect(result.agentRuns.map((run) => run.role)).toEqual(["main", "pro", "contra", "main_summary"]);
+    expect(result.promptBindings.map((binding) => binding.role)).toEqual(["main", "pro", "contra", "main_summary"]);
     expect(result.promptBindings[0].perspective).toBe("planner");
     expect(result.promptBindings[1].perspective).toBe("supports_article");
     expect(result.promptBindings[2].perspective).toBe("challenges_article");
+    expect(result.promptBindings[3].perspective).toBe("compares_perspectives");
     expect(result.promptBindings[1].systemPrompt).toContain("pro news research agent");
     expect(result.promptBindings[2].systemPrompt).toContain("contra news research agent");
+    expect(result.promptBindings[3].systemPrompt).toContain("final reader-facing summary");
     expect(result.promptBindings[1].promptHash).toBe(result.agentRuns[1].promptHash);
     expect(result.verifiableBuild.promptSourcePath).toBe("src/pipeline.ts");
     expect(result.manifest.kind).toBe("research");
     expect(result.manifest.article).toEqual(result.article);
-    expect(result.manifest.outputs.mainSummarySha256).toMatch(/^sha256:/);
-    expect(result.raw.agentOutputs.map((run) => run.role)).toEqual(["main", "pro", "contra"]);
+    expect(result.manifest.outputs.mainSummarySha256).toBe(result.agentRuns[3].rawOutputSha256);
+    expect(result.manifest.outputs.summaryAlgorithm).toBe("mainAgentSummary/v1");
+    expect(result.raw.agentOutputs.map((run) => run.role)).toEqual(["main", "pro", "contra", "main_summary"]);
     const recovered = await recoverManifestSigner(result.manifest.manifestSha256, result.signature);
     expect(recovered.toLowerCase()).toBe(deps.deployment.agentAddress.toLowerCase());
-    expect(callPrompts).toHaveLength(3);
+    expect(callPrompts).toHaveLength(4);
     expect(callPrompts[0]).toContain("Create two research prompts");
     expect(callPrompts[1]).toContain("Research evidence that supports");
     expect(callPrompts[2]).toContain("Research evidence that challenges");
+    expect(callPrompts[3]).toContain("Pro final verdict");
+    expect(callPrompts[3]).toContain("Verdict: supportive.");
+    expect(callPrompts[3]).toContain("Contra final verdict");
+    expect(callPrompts[3]).toContain("Verdict: complicating.");
     expect(callTimeouts).toEqual([
+      POLICY.RESEARCH_LLM_TIMEOUT_MS,
       POLICY.RESEARCH_LLM_TIMEOUT_MS,
       POLICY.RESEARCH_LLM_TIMEOUT_MS,
       POLICY.RESEARCH_LLM_TIMEOUT_MS,
@@ -265,8 +275,9 @@ describe("runArticleResearch", () => {
             latencyMs: 5,
           };
         }
-        if (callPrompts.length === 2) return { rawOutput: "Pro: timeline evidence supports the article.", latencyMs: 5 };
-        return { rawOutput: "Contra: timeline gaps complicate the article.", latencyMs: 5 };
+        if (callPrompts.length === 2) return { rawOutput: "Pro: timeline evidence supports the article.\nVerdict: timeline mostly holds.", latencyMs: 5 };
+        if (callPrompts.length === 3) return { rawOutput: "Contra: timeline gaps complicate the article.\nVerdict: timeline still has gaps.", latencyMs: 5 };
+        return { rawOutput: "Similarities: both analyze the timeline.\n\nDivergences: one sees support, the other sees gaps.\n\nBottom line: inspect the timing caveats.", latencyMs: 5 };
       },
     });
 
@@ -278,7 +289,8 @@ describe("runArticleResearch", () => {
     expect(result.contraPrompt).toContain("complicates");
     expect(result.proAnalysis).toContain("timeline evidence");
     expect(result.contraAnalysis).toContain("timeline gaps");
-    expect(callPrompts).toHaveLength(3);
+    expect(result.mainSummary).toContain("Divergences");
+    expect(callPrompts).toHaveLength(4);
   });
 
   test("rejects non-url article input before model calls", async () => {

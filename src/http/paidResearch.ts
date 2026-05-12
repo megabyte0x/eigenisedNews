@@ -4,7 +4,10 @@ import { join } from "node:path";
 import { createDual402, dualDiscovery, type Dual402Config, type JsonSchema } from "dual402";
 import { log } from "../lib/log";
 import type { RunSynthesisDeps } from "../pipeline";
-import type { Manifest } from "../types";
+import type { ResearchReportStore } from "../storage/researchStore";
+import type { Manifest, ResearchStorageInfo } from "../types";
+import { verifyResponse } from "../verifier/verify";
+import type { CheckResult } from "../verifier/types";
 import { makeResearchHandler } from "./research";
 
 export const PAID_RESEARCH_PATH = "/api/research";
@@ -59,7 +62,11 @@ type PaymentConfigResult =
   | { ok: true; value: ResolvedPaymentConfig }
   | { ok: false; missing: string[] };
 
-export function mountPaidResearchApi(app: Express, deps: RunSynthesisDeps, env: NodeJS.ProcessEnv = process.env): PaidResearchMountStatus {
+type PaidResearchOptions = {
+  researchStore?: ResearchReportStore;
+};
+
+export function mountPaidResearchApi(app: Express, deps: RunSynthesisDeps, env: NodeJS.ProcessEnv = process.env, options: PaidResearchOptions = {}): PaidResearchMountStatus {
   const mode = readPaidResearchMode(env.PAID_RESEARCH_ENABLED);
   const priceUsd = nonEmpty(env.PAID_RESEARCH_PRICE_USDC) ?? DEFAULT_PRICE_USDC;
   let status: PaidResearchMountStatus = {
@@ -75,14 +82,14 @@ export function mountPaidResearchApi(app: Express, deps: RunSynthesisDeps, env: 
   const configResult = resolvePaymentConfig(env);
   if (mode === "disabled") {
     status = { ...status, missing: configResult.ok ? [] : configResult.missing };
-    mountPaidResearchSupportRoutes(app, deps.deployment, env, status);
+    mountPaidResearchSupportRoutes(app, deps.deployment, env, status, options.researchStore?.info);
     log("info", "paid_research_disabled", { route: PAID_RESEARCH_PATH, mode });
     return status;
   }
 
   if (!configResult.ok) {
     status = { ...status, missing: configResult.missing };
-    mountPaidResearchSupportRoutes(app, deps.deployment, env, status);
+    mountPaidResearchSupportRoutes(app, deps.deployment, env, status, options.researchStore?.info);
     const message = `paid research payment config missing: ${configResult.missing.join(", ")}`;
     if (mode === "enabled") throw new Error(message);
     if (shouldLogAutoDisabled(env, mode)) {
@@ -99,7 +106,7 @@ export function mountPaidResearchApi(app: Express, deps: RunSynthesisDeps, env: 
       waitForSettle: readBoolean(env.PAID_RESEARCH_WAIT_FOR_SETTLE),
     });
 
-    app.post(PAID_RESEARCH_PATH, chargeResearch, makeResearchHandler(deps));
+    app.post(PAID_RESEARCH_PATH, chargeResearch, makeResearchHandler(deps, { store: options.researchStore }));
     dualDiscovery(app, dual, {
       info: {
         title: nonEmpty(env.SERVICE_NAME) ?? "eigenisedNews Paid Research API",
@@ -139,7 +146,7 @@ export function mountPaidResearchApi(app: Express, deps: RunSynthesisDeps, env: 
       enabled: true,
       payment: publicPayment,
     };
-    mountPaidResearchSupportRoutes(app, deps.deployment, env, status);
+    mountPaidResearchSupportRoutes(app, deps.deployment, env, status, options.researchStore?.info);
     log("info", "paid_research_enabled", {
       route: PAID_RESEARCH_PATH,
       priceUsd,
@@ -151,16 +158,21 @@ export function mountPaidResearchApi(app: Express, deps: RunSynthesisDeps, env: 
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     status = { ...status, error: message, payment: configResult.value.publicConfig };
-    mountPaidResearchSupportRoutes(app, deps.deployment, env, status);
+    mountPaidResearchSupportRoutes(app, deps.deployment, env, status, options.researchStore?.info);
     if (mode === "enabled") throw error;
     if (shouldLogAutoDisabled(env, mode)) log("warn", "paid_research_disabled", { route: PAID_RESEARCH_PATH, mode, error: message });
     return status;
   }
 }
 
-function mountPaidResearchSupportRoutes(app: Express, deployment: Manifest["deployment"], env: NodeJS.ProcessEnv, status: PaidResearchMountStatus): void {
+function mountPaidResearchSupportRoutes(app: Express, deployment: Manifest["deployment"], env: NodeJS.ProcessEnv, status: PaidResearchMountStatus, storageInfo: ResearchStorageInfo | undefined): void {
   app.get("/verify", (_req, res) => {
-    res.json(buildVerifyResponse(deployment, env, status));
+    res.json(buildVerifyResponse(deployment, env, status, storageInfo));
+  });
+  app.post("/verify", async (req, res) => {
+    const response = unwrapVerifyRequestBody(req.body);
+    const checks = await verifyResponse(response);
+    res.status(checks.some((check) => check.status === "fail") ? 422 : 200).json(buildBrowserVerifyResponse(checks));
   });
   app.get(PAID_RESEARCH_SKILL_PATH, (_req, res) => {
     const text = readSkillMarkdown();
@@ -170,6 +182,89 @@ function mountPaidResearchSupportRoutes(app: Express, deployment: Manifest["depl
     }
     res.type("text/markdown; charset=utf-8").send(text);
   });
+}
+
+function unwrapVerifyRequestBody(body: unknown): unknown {
+  if (body && typeof body === "object" && "response" in body) {
+    return (body as { response?: unknown }).response;
+  }
+  return body;
+}
+
+function buildBrowserVerifyResponse(checks: CheckResult[]): Record<string, unknown> {
+  const pass = checks.filter((check) => check.status === "pass").length;
+  const fail = checks.filter((check) => check.status === "fail").length;
+  const skip = checks.filter((check) => check.status === "skip").length;
+  return {
+    ok: fail === 0,
+    mode: "browser",
+    summary: {
+      pass,
+      fail,
+      skip,
+      title: fail === 0 ? "Verified in browser" : "Verification found a problem",
+      explanation: fail === 0
+        ? "The signed result is internally consistent. Skipped checks need live provenance or refetch evidence, but no terminal or file download is required for these browser checks."
+        : "At least one integrity check failed. Treat this result as unverified until the issue is resolved.",
+    },
+    checks: checks.map(describeCheckForBrowser),
+  };
+}
+
+function describeCheckForBrowser(check: CheckResult): Record<string, string> {
+  return {
+    ...check,
+    label: labelForVerifyCheck(check.name),
+    meaning: meaningForVerifyCheck(check.name, check.status),
+  };
+}
+
+function labelForVerifyCheck(name: string): string {
+  switch (name) {
+    case "schema":
+      return "Response shape";
+    case "manifest_hash":
+      return "Manifest hash";
+    case "signature":
+      return "Agent signature";
+    case "inputs":
+      return "Article binding";
+    case "research_outputs":
+      return "Displayed outputs";
+    case "research_raw":
+      return "Exact agent run";
+    case "provenance":
+      return "Verifiable build";
+    case "raw_outputs":
+      return "Raw model outputs";
+    case "merge":
+      return "Deterministic merge";
+    default:
+      return name.replace(/_/g, " ");
+  }
+}
+
+function meaningForVerifyCheck(name: string, status: CheckResult["status"]): string {
+  if (status === "fail") return "This check found a mismatch that needs investigation.";
+  if (status === "skip") {
+    if (name === "inputs") return "Live article refetch is not run from the default browser check.";
+    if (name === "provenance") return "Live EigenCompute provenance is linked separately through Verify build.";
+    return "This optional check needs evidence that was not part of the browser request.";
+  }
+  switch (name) {
+    case "schema":
+      return "The result has the expected signed research structure.";
+    case "manifest_hash":
+      return "The manifest hash recomputes to the value shown in the result.";
+    case "signature":
+      return "The manifest signature recovers the declared agent address.";
+    case "research_outputs":
+      return "The displayed pro/contra output and prompt hashes match the manifest.";
+    case "research_raw":
+      return "The exact planner, pro, contra, and summary prompts plus raw outputs match their hashes.";
+    default:
+      return "This integrity check passed.";
+  }
 }
 
 function resolvePaymentConfig(env: NodeJS.ProcessEnv): PaymentConfigResult {
@@ -243,8 +338,10 @@ function resolvePaymentConfig(env: NodeJS.ProcessEnv): PaymentConfigResult {
   };
 }
 
-function buildVerifyResponse(deployment: Manifest["deployment"], env: NodeJS.ProcessEnv, status: PaidResearchMountStatus): Record<string, unknown> {
+function buildVerifyResponse(deployment: Manifest["deployment"], env: NodeJS.ProcessEnv, status: PaidResearchMountStatus, storageInfo: ResearchStorageInfo | undefined): Record<string, unknown> {
   const dashboardUrl = dashboardUrlForDeployment(deployment);
+  const commitAvailable = isKnownMetadata(deployment.commitSha);
+  const imageDigestAvailable = isKnownMetadata(deployment.imageDigest);
   return {
     service: {
       name: nonEmpty(env.SERVICE_NAME) ?? DEFAULT_SERVICE_NAME,
@@ -261,6 +358,48 @@ function buildVerifyResponse(deployment: Manifest["deployment"], env: NodeJS.Pro
       agentAddress: deployment.agentAddress,
       environment: deployment.environment,
       dashboardUrl,
+    },
+    verification: {
+      purpose: [
+        "This endpoint is the public verification guide for eigenisedNews.",
+        "It explains the deployment, payment discovery, and how to verify a signed research package without exposing secrets.",
+      ].join(" "),
+      meaning: [
+        "Verification does not decide which perspective is true.",
+        "It proves which article bytes, prompts, model outputs, manifest hash, signer, and EigenCompute build produced the pro/contra result.",
+      ].join(" "),
+      researchPackage: {
+        endpoint: "/research?include=raw",
+        paidEndpoint: `${PAID_RESEARCH_PATH}?include=raw`,
+        browserVerify: { method: "POST", endpoint: "/verify", body: "{ response: <research response> }" },
+      },
+      checks: [
+        { name: "signed_manifest", explains: "The manifest hash is recovered from the agent signature and compared with the declared agent address." },
+        { name: "article_binding", explains: "The saved article URL and content hash are checked, with optional refetch drift detection." },
+        { name: "prompt_binding", explains: "The main planner, pro, and contra prompt hashes tie each displayed opinion to the exact agent instructions." },
+        { name: "raw_outputs", explains: "When ?include=raw is used, the verifier checks the planner/pro/contra prompts and raw outputs against their hashes." },
+        { name: "verifiable_build", explains: "EigenCompute provenance can confirm the app id, image digest, commit SHA, and agent address against verifiable-build evidence." },
+      ],
+      agentPerspectives: [
+        { role: "main", perspective: "planner", displays: "Creates the pro and contra research prompts from the article." },
+        { role: "pro", perspective: "supports_article", displays: "Runs the supporting argument with the shared article context." },
+        { role: "contra", perspective: "challenges_article", displays: "Runs the challenging argument with the same article context." },
+      ],
+      metadataStatus: {
+        commit: commitAvailable ? "available" : "missing",
+        imageDigest: imageDigestAvailable ? "available" : "missing",
+        guidance: commitAvailable && imageDigestAvailable
+          ? "Commit and image digest are present for provenance checks."
+          : "Set EIGEN_COMMIT_SHA/EIGEN_IMAGE_DIGEST, or compatible CI aliases, during deployment so responses can link to build provenance instead of reporting unknown metadata.",
+      },
+      storage: storageInfo ? {
+        historyEndpoint: "/research/history",
+        reportEndpointTemplate: "/research/history/{id}?include=raw",
+        reportsPath: storageInfo.reportsPath,
+        persistentDataPath: storageInfo.persistentDataPath,
+        source: storageInfo.source,
+        docs: storageInfo.docsUrl,
+      } : null,
     },
     payment: {
       enabled: status.enabled,
@@ -282,6 +421,11 @@ function buildVerifyResponse(deployment: Manifest["deployment"], env: NodeJS.Pro
       source: "https://github.com/mmurrs/dual402",
     },
   };
+}
+
+function isKnownMetadata(value: string): boolean {
+  const normalized = value.trim().toLowerCase();
+  return normalized.length > 0 && normalized !== "unknown" && normalized !== "unavailable" && normalized !== "null";
 }
 
 function readSkillMarkdown(): string | null {

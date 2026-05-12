@@ -22,7 +22,7 @@ import { recoverManifestSigner } from "../manifest/sign";
 import { parseStructuredOutput } from "../fanout/llmProxy";
 import { consensus, type ConsensusInput } from "../merger/consensus";
 import { fetchUrl as defaultFetchUrl, type FetchUrlResult } from "../fetchers/sourceFetcher";
-import { composeResearchSummary, parseResearchPrompts } from "../pipeline";
+import { parseResearchPrompts } from "../pipeline";
 import { matchProvenance, type ProvenanceChecker } from "./provenance";
 import type { CheckResult } from "./types";
 
@@ -178,7 +178,6 @@ function verifyResearchOutputs(response: NewsResearchResponse): CheckResult {
   if (sha256Hex(response.proAnalysis) !== m.outputs.proAnalysisSha256) mismatches.push("proAnalysisSha256");
   if (sha256Hex(response.contraAnalysis) !== m.outputs.contraAnalysisSha256) mismatches.push("contraAnalysisSha256");
   if (sha256Hex(response.mainSummary) !== m.outputs.mainSummarySha256) mismatches.push("mainSummarySha256");
-  if (composeResearchSummary(response.proAnalysis, response.contraAnalysis) !== response.mainSummary) mismatches.push("mainSummary");
 
   return mismatches.length === 0
     ? { name: "research_outputs", status: "pass", detail: "response fields match research manifest" }
@@ -211,7 +210,8 @@ function verifyResearchRawOutputs(response: NewsResearchResponse): CheckResult {
   const main = rawByRole.get("main");
   const pro = rawByRole.get("pro");
   const contra = rawByRole.get("contra");
-  if (!main || !pro || !contra) return { name: "research_raw", status: "fail", detail: "expected main/pro/contra raw outputs" };
+  const summary = rawByRole.get("main_summary");
+  if (!main || !pro || !contra || !summary) return { name: "research_raw", status: "fail", detail: "expected main/pro/contra/main_summary raw outputs" };
 
   try {
     const prompts = parseResearchPrompts(main.rawOutput);
@@ -223,12 +223,13 @@ function verifyResearchRawOutputs(response: NewsResearchResponse): CheckResult {
   }
   if (pro.rawOutput !== response.proAnalysis) return { name: "research_raw", status: "fail", detail: "pro raw output mismatch" };
   if (contra.rawOutput !== response.contraAnalysis) return { name: "research_raw", status: "fail", detail: "contra raw output mismatch" };
+  if (summary.rawOutput !== response.mainSummary) return { name: "research_raw", status: "fail", detail: "main summary raw output mismatch" };
 
   return { name: "research_raw", status: "pass", detail: `${raw.agentOutputs.length} raw research outputs verified` };
 }
 
 function hasResearchRoles(items: Array<{ role: string }>): boolean {
-  return items.map((item) => item.role).join(",") === "main,pro,contra";
+  return items.map((item) => item.role).join(",") === "main,pro,contra,main_summary";
 }
 
 async function verifyProvenance(deployment: Manifest["deployment"], opts: VerifyOptions): Promise<CheckResult> {

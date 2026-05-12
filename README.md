@@ -4,11 +4,11 @@ eigenisedNews is a research product for interrogating a single news article from
 
 ![](./architecture.png)
 
-Its primary workflow accepts one article URL, fetches that article once, prepares a shared article context, asks a main agent to create two research prompts, then returns a pro analysis and a contra analysis over the same source material. The repo also keeps a secondary operator workflow: a signed multi-model synthesis console that produces a verifiable manifest over a fixed model set.
+Its primary workflow accepts one article URL, fetches that article once, prepares a shared article context, asks a main agent to create two research prompts, runs pro and contra analyses over the same source material, then has the main agent summarize where those takes align or diverge. The repo also keeps a secondary operator workflow: a signed multi-model synthesis console that produces a verifiable manifest over a fixed model set.
 
 ## What the product does
 
-- **Primary mode: article research.** Submit one news article URL and get two evidence-backed perspectives on the same article: one supporting the framing and one challenging it.
+- **Primary mode: article research.** Submit one news article URL and get two evidence-backed perspectives on the same article, plus a quick main-agent synthesis of where the pro/contra verdicts agree or split.
 - **Paid agent API.** Agents can call the same research workflow through `POST /api/research`, pay per request with x402 or MPP via `dual402`, and discover the route through OpenAPI/x402 metadata.
 - **Secondary mode: signed synthesis.** Submit a topic plus URLs and/or pasted source text, fan the request out to the fixed model set, and receive a signed consensus manifest.
 - **Verifier support.** Saved `/synthesize` responses can be replayed and checked offline, with optional URL refetch and EigenCompute provenance evidence.
@@ -23,7 +23,7 @@ Read the deeper docs here:
 
 ## Product surfaces
 
-### 1. Article research (`POST /research`)
+### 1. Article research (`POST /research`, `POST /research/jobs`)
 
 This is the default UI and the main product story.
 
@@ -33,9 +33,23 @@ curl http://localhost:3000/research \
   -d '{"articleUrl":"https://example.com/news/story"}'
 ```
 
-The response includes article metadata, the pro/contra prompts derived from the article, both analyses, clean request/error metadata, and agent run diagnostics. It also returns `promptBindings` (the visible system prompt for each main/pro/contra agent, system-prompt hash, and full prompt hash) plus `verifiableBuild` metadata (`appId`, `imageDigest`, `commitSha`, dashboard URL, and prompt source path) so a reviewer can connect each perspective to the deployed EigenCompute build.
+The response includes article metadata, the pro/contra prompts derived from the article, both analyses, the main-agent comparison summary, clean request/error metadata, and agent run diagnostics. It also returns `promptBindings` (the visible system prompt for each main planner/pro/contra/main-summary stage, system-prompt hash, and full prompt hash) plus `verifiableBuild` metadata (`appId`, `imageDigest`, `commitSha`, dashboard URL, and prompt source path) so a reviewer can connect each perspective to the deployed EigenCompute build.
 
-`/research` responses are signed and verifier-compatible. Raw audit payloads are omitted by default; request `?include=raw` when you want the planner/pro/contra raw outputs and exact prompts included for strict replay checks.
+`/research` responses are signed and verifier-compatible. Raw audit payloads are omitted by default; request `?include=raw` when you want the planner/pro/contra/summary raw outputs and exact prompts included for strict replay checks.
+
+Successful research reports are persisted server-side. On EigenCompute the store uses the platform persistent data mount (`USER_PERSISTENT_DATA_PATH`, normally `/mnt/disks/userdata`) under `eigenised-news/research-reports`; local development falls back to `.data/eigenised-news/research-reports` unless `RESEARCH_STORAGE_DIR` is set. Duplicate article links are normalized and reuse the saved report instead of rerunning the agents.
+
+For batch submissions, use the queue API. Jobs run with concurrency `1` by default so long research calls provide immediate feedback without racing the Eigen gateway path:
+
+```bash
+curl http://localhost:3000/research/jobs?include=raw \
+  -H 'content-type: application/json' \
+  -d '{"articleUrls":["https://example.com/news/story","https://example.com/news/second"]}'
+
+curl http://localhost:3000/research/jobs/<job-id>
+```
+
+Set `RESEARCH_QUEUE_STORE_PATH` to persist queue state to a JSON file. Successful queued reports are also saved to the normal persistent research history when the report store is available.
 
 When `FIRECRAWL_API_KEY` is configured, article fetching uses Firecrawl `/v2/scrape` first for clean markdown content. If Firecrawl is unavailable or returns no usable content, the fetcher falls back to the existing bounded direct HTTP request. Without `FIRECRAWL_API_KEY`, direct HTTP remains the only fetch path.
 
@@ -55,7 +69,9 @@ Agent-facing support routes:
 
 - `GET /openapi.json` — OpenAPI 3.1 description with payment metadata.
 - `GET /.well-known/x402` — x402 resource discovery.
-- `GET /verify` — EigenCompute deployment, payee, facilitator, and discovery metadata without secrets.
+- `GET /verify` — user-readable verification guide plus EigenCompute deployment, payee, facilitator, and discovery metadata without secrets.
+- `POST/GET /research/jobs` and `GET /research/jobs/{id}` — queued batch article research.
+- `GET /research/history` and `GET /research/history/{id}` — persistent saved research report index/detail for browser history and duplicate reuse.
 - `GET /skill.md` — external agent skill for setup and endpoint usage.
 
 Local/dev defaults keep the paid route in `auto` mode: it is mounted only when payment environment variables are complete. Set `PAID_RESEARCH_ENABLED=true` in production to fail closed if x402/MPP config is incomplete.
@@ -106,9 +122,11 @@ When `FRONTEND_API_BASE_URL` is unset, the UI uses same-origin `/research` and `
 
 The `/synthesize` path is built for replayable verification. The app records request and input hashes, per-model prompt hashes and outcomes, deterministic merge results, deployment metadata, and a signature over the manifest hash. The standalone verifier can then check integrity, signature recovery, raw output consistency, merge replay, refetch drift, and optional EigenCompute provenance.
 
-The `/research` and paid `/api/research` paths produce a signed research manifest. It records the article URL/content hash, main/pro/contra prompt hashes, output hashes, deterministic summary hash, deployment metadata, and a signature over the research manifest hash. With `?include=raw`, the verifier can also check the exact planner/pro/contra prompts and raw outputs.
+The `/research` and paid `/api/research` paths produce a signed research manifest. It records the article URL/content hash, main/pro/contra/summary prompt hashes, output hashes, main-agent summary hash, deployment metadata, and a signature over the research manifest hash. With `?include=raw`, the verifier can also check the exact planner/pro/contra/summary prompts and raw outputs.
 
-Use the verifier directly:
+The browser UI includes a **Verification guide** card that explains what the proof does and does not mean, runs an in-browser **Verify this result** check through `POST /verify`, makes the EigenCloud build link visually distinct, and shows the exact agent prompts when raw audit data is included. The default reader UX does not require a terminal command or file download. It also includes a **Previous researched articles** library backed by the persistent report store so users can click a saved article and read the prior report directly.
+
+Advanced operators can still use the verifier CLI directly:
 
 ```bash
 npx tsx scripts/verify-manifest.ts response.json
@@ -153,6 +171,7 @@ The smoke check verifies:
 What already exists:
 
 - article-research-first browser UI
+- persistent research history with duplicate URL reuse
 - signed synthesis operator console
 - standalone verifier CLI
 - EigenCompute deployment config
@@ -161,7 +180,6 @@ What is still out of scope:
 
 - on-chain commit of `manifestSha256`
 - scheduled / cron synthesis
-- persistent storage / history
 - streaming responses
 - EIP-712 typed-data signatures
 - request authentication / rate limiting
