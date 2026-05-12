@@ -566,25 +566,15 @@ describe("NewsResearchApp", () => {
     expect(container.textContent).not.toContain("## Supporting Evidence");
   });
 
-  test("exposes the synthesis console as a secondary UI mode", () => {
+  test("renders article research without the synthesis mode switch", () => {
     const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse(historyResponse()));
     render(React.createElement(NewsResearchApp, { fetchImpl }));
 
-    const researchTab = screen.getByRole("tab", { name: /article research/i });
-    const synthesisTab = screen.getByRole("tab", { name: /open synthesis console/i });
-
-    expect(researchTab).toHaveAttribute("aria-selected", "true");
-    expect(screen.queryByRole("heading", { name: /compose request/i })).not.toBeInTheDocument();
-
-    fireEvent.click(synthesisTab);
-
-    expect(synthesisTab).toHaveAttribute("aria-selected", "true");
-    expect(screen.getByRole("heading", { name: /compose request/i })).toBeInTheDocument();
-    expect(screen.getByText((_, element) => element?.textContent === "POST /synthesize")).toBeInTheDocument();
-
-    fireEvent.click(researchTab);
-
-    expect(researchTab).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("heading", { name: /news article research/i })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: /research a url/i })).toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: /article research/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: /open synthesis console/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: /compose request/i })).not.toBeInTheDocument();
+    expect(screen.queryByText((_, element) => element?.textContent === "POST /synthesize")).not.toBeInTheDocument();
   });
 });

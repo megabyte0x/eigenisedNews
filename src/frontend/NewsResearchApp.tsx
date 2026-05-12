@@ -11,7 +11,6 @@ import type {
 import { isUnknownRecord } from "../lib/guards";
 import { isNewsResearchResponse, isResearchHistoryResponse } from "../lib/manifestGuards";
 import { isHttpUrl } from "../lib/url";
-import { OperatorConsole } from "./OperatorConsole";
 import { resolveFrontendApiUrl } from "./runtimeConfig";
 import type { FetchLike, SubmitEventLike } from "./types";
 import type { CheckResult } from "../verifier/types";
@@ -79,11 +78,9 @@ type FormattedBlock =
 const SURFACE = "surface-card";
 const inputClassName = "form-input";
 const HOSTED_AGENT_SKILL_URL = "https://eigenised-news.vercel.app/skill.md";
-type AppMode = "research" | "synthesis";
 type HeroAudience = "readers" | "agents";
 
 export function NewsResearchApp({ fetchImpl = fetch }: NewsResearchAppProps) {
-  const [appMode, setAppMode] = useState<AppMode>("research");
   const [articleUrl, setArticleUrl] = useState("");
   const [heroAudience, setHeroAudience] = useState<HeroAudience>("readers");
   const [status, setStatus] = useState<ResearchStatus>({ kind: "idle" });
@@ -361,14 +358,7 @@ export function NewsResearchApp({ fetchImpl = fetch }: NewsResearchAppProps) {
   return (
     <div className="app-shell">
       <div className="app-shell__inner app-shell__inner--spacious">
-        <AppModeSwitch mode={appMode} onSelect={setAppMode} />
-
-        {appMode === "synthesis" ? (
-          <div aria-labelledby="synthesis-console-tab" id="synthesis-console-panel" role="tabpanel">
-            <OperatorConsole fetchImpl={fetchImpl} frame="embedded" />
-          </div>
-        ) : (
-          <div aria-labelledby="article-research-tab" className="app-mode-panel" id="article-research-panel" role="tabpanel">
+        <div className="app-mode-panel">
             <header className={`${SURFACE} surface-card--hero`}>
               <div className="surface-card__body surface-card__body--hero hero-grid">
                 <div>
@@ -539,37 +529,7 @@ export function NewsResearchApp({ fetchImpl = fetch }: NewsResearchAppProps) {
               </aside>
             </div>
           </div>
-        )}
       </div>
-    </div>
-  );
-}
-
-function AppModeSwitch({ mode, onSelect }: { mode: AppMode; onSelect: (mode: AppMode) => void }) {
-  return (
-    <div className="mode-switch mode-switch--app" role="tablist" aria-label="Application mode">
-      <button
-        aria-controls="article-research-panel"
-        aria-selected={mode === "research"}
-        className={`mode-switch__button ${mode === "research" ? "mode-switch__button--active" : ""}`}
-        id="article-research-tab"
-        onClick={() => onSelect("research")}
-        role="tab"
-        type="button"
-      >
-        Article research
-      </button>
-      <button
-        aria-controls="synthesis-console-panel"
-        aria-selected={mode === "synthesis"}
-        className={`mode-switch__button ${mode === "synthesis" ? "mode-switch__button--active" : ""}`}
-        id="synthesis-console-tab"
-        onClick={() => onSelect("synthesis")}
-        role="tab"
-        type="button"
-      >
-        Open synthesis console
-      </button>
     </div>
   );
 }
