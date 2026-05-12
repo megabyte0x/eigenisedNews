@@ -81,6 +81,11 @@ describe("NewsResearchApp", () => {
   test("shows a For Agents header tab with a hosted skill prompt", async () => {
     document.body.innerHTML = '<script id="frontend-runtime-config" type="application/json">{"apiBaseUrl":"https://api.example"}</script>';
     const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse(historyResponse()));
+    const writeText = vi.fn<(value: string) => Promise<void>>().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
 
     render(React.createElement(NewsResearchApp, { fetchImpl }));
 
@@ -93,6 +98,13 @@ describe("NewsResearchApp", () => {
     expect(prompt.textContent).toContain("https://eigenised-news.vercel.app/skill.md");
     expect(prompt.textContent).toContain("<ARTICLE_URL>");
     expect(screen.getByRole("link", { name: /open hosted skill/i })).toHaveAttribute("href", "https://eigenised-news.vercel.app/skill.md");
+
+    fireEvent.click(screen.getByRole("button", { name: /copy agent handoff prompt/i }));
+
+    await waitFor(() => {
+      expect(writeText).toHaveBeenCalledWith(expect.stringContaining("https://eigenised-news.vercel.app/skill.md"));
+    });
+    expect(screen.getByText(/copied to clipboard/i)).toBeInTheDocument();
 
     fireEvent.change(screen.getByLabelText(/news article url/i), { target: { value: "https://news.example/story" } });
 

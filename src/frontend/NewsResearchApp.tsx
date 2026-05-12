@@ -590,6 +590,17 @@ function HeroAudiencePanel({
   prompt: string;
   skillUrl: string;
 }) {
+  const [copyStatus, setCopyStatus] = useState<"idle" | "copied" | "failed">("idle");
+
+  useEffect(() => {
+    setCopyStatus("idle");
+  }, [prompt]);
+
+  async function copyPrompt() {
+    const copied = await writeClipboardText(prompt);
+    setCopyStatus(copied ? "copied" : "failed");
+  }
+
   return (
     <div className="hero-audience">
       <div className="hero-audience__tabs" role="tablist" aria-label="Header audience tools">
@@ -625,8 +636,22 @@ function HeroAudiencePanel({
           role="tabpanel"
         >
           <span className="hero-note__eyebrow">Agent handoff</span>
-          <p className="hero-note__copy">Copy this into an autonomous agent to use the hosted paid-research skill.</p>
-          <pre className="hero-agent-prompt"><code>{prompt}</code></pre>
+          <p className="hero-note__copy">Click the prompt to copy it for direct pasting into an autonomous agent.</p>
+          <button
+            aria-label="Copy agent handoff prompt"
+            className="hero-agent-prompt"
+            onClick={() => void copyPrompt()}
+            type="button"
+          >
+            <code>{prompt}</code>
+          </button>
+          <p aria-live="polite" className="hero-agent-copy-status">
+            {copyStatus === "copied"
+              ? "Copied to clipboard."
+              : copyStatus === "failed"
+                ? "Clipboard unavailable. Select and copy the prompt manually."
+                : "Ready to copy."}
+          </p>
           <a className="hero-agent-skill-link" href={skillUrl} rel="noopener noreferrer" target="_blank">
             Open hosted SKILL.md
           </a>
@@ -643,6 +668,36 @@ function HeroAudiencePanel({
       )}
     </div>
   );
+}
+
+async function writeClipboardText(text: string): Promise<boolean> {
+  if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch {
+      // Fall through to the textarea fallback for browsers that expose but block Clipboard API writes.
+    }
+  }
+
+  if (typeof document === "undefined") return false;
+
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.setAttribute("readonly", "true");
+  textarea.style.position = "fixed";
+  textarea.style.inset = "0 auto auto 0";
+  textarea.style.opacity = "0";
+  document.body.appendChild(textarea);
+  textarea.select();
+
+  try {
+    return document.execCommand("copy");
+  } catch {
+    return false;
+  } finally {
+    textarea.remove();
+  }
 }
 
 function ResearchFlow({ status }: { status: ResearchStatus["kind"] }) {
