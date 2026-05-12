@@ -9,7 +9,7 @@ import { renderFrontendShell } from "./frontend/shell";
 import { makeResearchHandler } from "./http/research";
 import { makeSynthesizeHandler } from "./http/synthesize";
 import type { ManifestSigner } from "./manifest/sign";
-import type { RunSynthesisDeps, StructuredOutputDebugInfo } from "./pipeline";
+import type { RunSynthesisDeps } from "./pipeline";
 import type { Manifest } from "./types";
 import { loadDotEnvFile } from "./lib/env";
 import { isUnknownRecord } from "./lib/guards";
@@ -59,7 +59,6 @@ function buildProductionDeps(): RunSynthesisDeps {
   return {
     fetchUrl,
     callModel: ({ provider, model, prompt, timeoutMs, maxOutputTokens }) => callModel({ provider, model, prompt, timeoutMs, maxOutputTokens, onDebugInfo: logCallErrorDebugInfo }),
-    onStructuredOutputDebugInfo: logStructuredOutputDebugInfo,
     now: () => new Date().toISOString(),
     deployment,
     sign,
@@ -68,10 +67,6 @@ function buildProductionDeps(): RunSynthesisDeps {
 
 function logCallErrorDebugInfo(info: CallErrorDebugInfo): void {
   log("error", "llm_call_debug", info);
-}
-
-function logStructuredOutputDebugInfo(info: StructuredOutputDebugInfo): void {
-  log("error", "llm_parse_debug", info);
 }
 
 function readFrontendRuntimeConfig(): { apiBaseUrl?: string } {

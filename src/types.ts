@@ -6,7 +6,7 @@ export type SynthesizeRequest = {
   sources?: SynthesizeSource[];
 };
 
-export type SynthesizeSource = { title?: string; url?: string; text: string };
+type SynthesizeSource = { title?: string; url?: string; text: string };
 
 export type InputRecord = {
   index: number;
@@ -18,7 +18,7 @@ export type InputRecord = {
   error: string | null;
 };
 
-export type ModelRunStatus = "ok" | "error";
+type ModelRunStatus = "ok" | "error";
 
 export type ModelRun = {
   provider: string;
@@ -81,7 +81,7 @@ export type NewsResearchRequest = {
   requestId?: string;
 };
 
-export type NewsResearchArticle = {
+type NewsResearchArticle = {
   url: string;
   contentSha256: Sha256 | null;
   fetchedAt?: string;
@@ -120,7 +120,7 @@ export type NewsResearchVerifiableBuild = Manifest["deployment"] & {
   promptSourceUrl: string | null;
 };
 
-export type NewsResearchOutputHashes = {
+type NewsResearchOutputHashes = {
   proPromptSha256: Sha256;
   contraPromptSha256: Sha256;
   proAnalysisSha256: Sha256;

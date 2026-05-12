@@ -8,13 +8,12 @@
  * src/lib/policy.ts and bump RULESET_VERSION.
  */
 
-import { eigen, createEigenGateway } from "@layr-labs/ai-gateway-provider";
+import { createEigenGateway } from "@layr-labs/ai-gateway-provider";
 import { callModel, extractCallErrorDebugInfo } from "../src/fanout/llmProxy";
 import { resolveEigenGatewayUrl } from "../src/lib/eigenGateway";
 import { POLICY, providerModelKey } from "../src/lib/policy";
 
-const baseURL = (process.env.EIGEN_GATEWAY_URL || process.env.EIGEN_GATEWAY_BASE_URL) ? resolveEigenGatewayUrl() : null;
-const factory = baseURL ? createEigenGateway({ baseURL }) : eigen;
+const factory = createEigenGateway({ baseURL: resolveEigenGatewayUrl() });
 
 const PROMPT = "Reply with the literal word PONG and nothing else.";
 

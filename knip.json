@@ -1,0 +1,18 @@
+{
+  "$schema": "https://unpkg.com/knip@latest/schema.json",
+  "entry": [
+    "src/index.ts",
+    "src/frontend/main.tsx",
+    "scripts/build-frontend.mjs",
+    "scripts/live-e2e.mjs",
+    "scripts/llm-proxy-probe.ts",
+    "scripts/verify-manifest.ts",
+    "test/**/*.test.ts"
+  ],
+  "project": [
+    "src/**/*.{ts,tsx}",
+    "scripts/**/*.{js,mjs,ts,mts}",
+    "test/**/*.ts"
+  ],
+  "ignoreDependencies": ["tsx"]
+}

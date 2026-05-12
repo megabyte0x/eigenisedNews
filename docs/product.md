@@ -4,9 +4,9 @@
 
 eigenisedNews is built around one core user experience: take a single news article URL and research it from both sides without letting each perspective cherry-pick a different source.
 
-The product fetches the article once, prepares one shared article context, asks a main agent to create a pro prompt and a contra prompt, then runs two perspective analyses over the same prepared input. The result is meant to be reader-first: a concise framing of the article plus arguments for and against its framing, with prompts and diagnostics preserved for inspection.
+The product fetches the article once, prepares one shared article context, asks a main agent to create a pro prompt and a contra prompt, then runs two perspective analyses over the same prepared input. The result is reader-first: a concise framing of the article plus arguments for and against its framing, with prompts and diagnostics preserved for inspection.
 
-The repository also includes a second, more operator-oriented workflow: multi-model synthesis with a signed manifest. That path is still part of the product, but it is not the default experience.
+The repository also includes a second, more operator-oriented workflow: multi-model synthesis with a signed manifest. That path remains available but is not the default experience.
 
 ## Primary workflow: article research
 
@@ -68,7 +68,7 @@ The returned `mainSummary` is then composed from the two perspective outputs.
 
 ### Signed provenance and build binding
 
-The research response is meant to make the different perspectives inspectable, not hidden inside logs. Each successful response includes a signed research manifest that binds:
+The research response makes the different perspectives inspectable instead of hiding them in logs. Each successful response includes a signed research manifest that binds:
 
 - the system prompt for the main planner, pro agent, and contra agent
 - the generated pro/contra research prompt
@@ -81,7 +81,7 @@ The UI shows this in the **Perspective provenance** panel and exposes a signed r
 
 ## Secondary workflow: signed synthesis console
 
-The synthesis console is still available through **Open synthesis console** in the UI.
+The synthesis console is available through **Open synthesis console** in the UI.
 
 ### What it is for
 
@@ -111,7 +111,7 @@ The default browser surface is the article research interface. It is the product
 
 ### Operator console
 
-The synthesis console is still part of the application, but it is presented as a secondary workflow behind the **Open synthesis console** action. It exposes manifest details, claims, signature data, and optional raw model output.
+The synthesis console is a secondary workflow behind the **Open synthesis console** action. It exposes manifest details, claims, signature data, and optional raw model output.
 
 ## Current constraints users should understand
 

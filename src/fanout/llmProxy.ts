@@ -1,7 +1,8 @@
-import { APICallError, Output, generateText, jsonSchema } from "ai";
+import { APICallError, generateText } from "ai";
 import { eigen, createEigenGateway, type EigenGatewayLanguageModel } from "@layr-labs/ai-gateway-provider";
-import { isUnknownRecord } from "../lib/guards";
+import { isUnknownRecord, type UnknownRecord } from "../lib/guards";
 import { sha256Hex } from "../lib/hash";
+import { parseUnknownJson } from "../lib/json";
 import { POLICY } from "../lib/policy";
 import type { StructuredModelOutput } from "../types";
 
@@ -34,35 +35,11 @@ export type CallErrorDebugInfo = {
   message?: string;
   errorName?: string;
   errorConstructor?: string;
-  errorFields?: Record<string, unknown>;
+  errorFields?: UnknownRecord;
   rawOutputSha256?: string;
   rawOutputByteLength?: number;
   rawOutput?: string;
 };
-
-const STRUCTURED_MODEL_OUTPUT_SCHEMA = {
-  type: "object",
-  properties: {
-    claims: {
-      type: "array",
-      items: {
-        type: "object",
-        properties: {
-          statement: { type: "string" },
-          supportingSourceIndices: {
-            type: "array",
-            items: { type: "integer", minimum: 0 },
-          },
-        },
-        required: ["statement", "supportingSourceIndices"],
-        additionalProperties: false,
-      },
-    },
-    summary: { type: "string" },
-  },
-  required: ["claims", "summary"],
-  additionalProperties: false,
-} as const;
 
 export async function callModel(args: CallModelArgs): Promise<CallModelResult> {
   const retries = args.retries ?? POLICY.LLM_RETRIES;
@@ -87,25 +64,6 @@ export async function callModel(args: CallModelArgs): Promise<CallModelResult> {
       });
       if (typeof result.text !== "string") throw new Error("malformed_response");
       if (result.text.trim().length === 0) {
-        const recoveredOutput = shouldRecoverBlankTextForOpus(args.provider, args.model)
-          ? recoverOpusAssistantPayload(result)
-          : null;
-        if (recoveredOutput !== null) {
-          return { rawOutput: recoveredOutput, latencyMs: Date.now() - t0 };
-        }
-
-        const structuredFallbackOutput = shouldRecoverBlankTextForOpus(args.provider, args.model)
-          ? await invokeOpusStructuredOutputFallback({
-            factory,
-            modelId,
-            prompt: args.prompt,
-            abortSignal: controller.signal,
-          })
-          : null;
-        if (structuredFallbackOutput !== null) {
-          return { rawOutput: structuredFallbackOutput, latencyMs: Date.now() - t0 };
-        }
-
         throw createEmptyResponseError(args.provider, args.model, result.text);
       }
       return { rawOutput: result.text, latencyMs: Date.now() - t0 };
@@ -140,7 +98,7 @@ function classifyCallError(e: unknown, parentSignal: AbortSignal | undefined): s
   return "network_error";
 }
 
-export function buildCallErrorDebugInfo(error: unknown, args: Pick<CallModelArgs, "provider" | "model">, code: string): CallErrorDebugInfo | null {
+function buildCallErrorDebugInfo(error: unknown, args: Pick<CallModelArgs, "provider" | "model">, code: string): CallErrorDebugInfo | null {
   if (error instanceof Error && isCallErrorDebugInfo(error.cause)) {
     return error.cause;
   }
@@ -183,7 +141,7 @@ export function parseStructuredOutput(rawOutput: string): StructuredModelOutput 
   const trimmed = extractStructuredOutputJson(rawOutput);
   let obj: unknown;
   try {
-    obj = JSON.parse(trimmed);
+    obj = parseUnknownJson(trimmed);
   } catch {
     throw new Error("structured_output_invalid_json");
   }
@@ -291,150 +249,13 @@ function hasStatusCode(value: unknown): value is Error & { statusCode: number } 
   return value instanceof Error && "statusCode" in value && typeof value.statusCode === "number";
 }
 
-function shouldRecoverBlankTextForOpus(provider: string, model: string): boolean {
-  return provider === "anthropic" && model === "claude-opus-4.7";
-}
-
-function recoverOpusAssistantPayload(result: {
-  content?: unknown;
-  response?: { body?: unknown };
-  steps?: unknown;
-}): string | null {
-  return extractCandidatePayloadFromContent(result.content)
-    ?? extractCandidatePayloadFromResponseBody(result.response?.body)
-    ?? extractCandidatePayloadFromSteps(result.steps);
-}
-
-async function invokeOpusStructuredOutputFallback(args: {
-  factory: (modelId: string) => EigenGatewayLanguageModel;
-  modelId: string;
-  prompt: string;
-  abortSignal: AbortSignal;
-}): Promise<string | null> {
-  try {
-    const result = await generateText({
-      model: args.factory(args.modelId),
-      prompt: args.prompt,
-      temperature: POLICY.LLM_TEMPERATURE,
-      abortSignal: args.abortSignal,
-      output: Output.object({
-        name: "StructuredNewsSynthesis",
-        description: "Structured news synthesis response.",
-        schema: jsonSchema(STRUCTURED_MODEL_OUTPUT_SCHEMA),
-      }),
-      providerOptions: {
-        anthropic: {
-          structuredOutputMode: "jsonTool",
-        },
-      },
-    });
-
-    const fromOutput = normalizeStructuredOutputValue(await result.output);
-    if (fromOutput !== null) return fromOutput;
-
-    if (typeof result.text === "string") {
-      const normalizedText = normalizeStructuredOutputRawOutput(result.text);
-      if (normalizedText !== null) return normalizedText;
-    }
-
-    const recoveredOutput = recoverOpusAssistantPayload(result);
-    return recoveredOutput === null ? null : normalizeStructuredOutputRawOutput(recoveredOutput);
-  } catch {
-    return null;
-  }
-}
-
-function normalizeStructuredOutputValue(value: unknown): string | null {
-  if (value === null || value === undefined) return null;
-  try {
-    return JSON.stringify(parseStructuredOutput(JSON.stringify(value)));
-  } catch {
-    return null;
-  }
-}
-
-function normalizeStructuredOutputRawOutput(rawOutput: string): string | null {
-  try {
-    return JSON.stringify(parseStructuredOutput(rawOutput));
-  } catch {
-    return null;
-  }
-}
-
-function extractCandidatePayloadFromSteps(steps: unknown): string | null {
-  if (!Array.isArray(steps)) return null;
-
-  for (let i = steps.length - 1; i >= 0; i--) {
-    const step = steps[i];
-    if (!isUnknownRecord(step)) continue;
-
-    const fromContent = extractCandidatePayloadFromContent(step.content);
-    if (fromContent !== null) return fromContent;
-
-    const fromBody = isUnknownRecord(step.response)
-      ? extractCandidatePayloadFromResponseBody(step.response.body)
-      : null;
-    if (fromBody !== null) return fromBody;
-  }
-
-  return null;
-}
-
-function extractCandidatePayloadFromContent(content: unknown): string | null {
-  if (!Array.isArray(content)) return null;
-
-  const textParts = content
-    .map((part) => extractTextPart(part))
-    .filter((part): part is string => part !== null);
-  if (textParts.length === 0) return null;
-
-  const candidate = textParts.join("");
-  return candidate.trim().length > 0 ? candidate : null;
-}
-
-function extractCandidatePayloadFromResponseBody(body: unknown): string | null {
-  if (typeof body === "string") return body.trim().length > 0 ? body : null;
-  if (!isUnknownRecord(body)) return null;
-
-  return extractCandidatePayloadFromContent(body.content)
-    ?? extractCandidatePayloadFromMessage(body.message)
-    ?? extractCandidatePayloadFromMessages(body.messages);
-}
-
-function extractCandidatePayloadFromMessages(messages: unknown): string | null {
-  if (!Array.isArray(messages)) return null;
-
-  for (let i = messages.length - 1; i >= 0; i--) {
-    const candidate = extractCandidatePayloadFromMessage(messages[i]);
-    if (candidate !== null) return candidate;
-  }
-
-  return null;
-}
-
-function extractCandidatePayloadFromMessage(message: unknown): string | null {
-  if (!isUnknownRecord(message)) return null;
-
-  if (typeof message.content === "string") {
-    return message.content.trim().length > 0 ? message.content : null;
-  }
-
-  return extractCandidatePayloadFromContent(message.content);
-}
-
-function extractTextPart(part: unknown): string | null {
-  if (!isUnknownRecord(part)) return null;
-  if (part.type !== "text" || typeof part.text !== "string") return null;
-  return part.text;
-}
-
 function readErrorStatusCode(value: unknown): number | undefined {
   if (hasStatusCode(value)) return value.statusCode;
   if (!isUnknownRecord(value) || typeof value.statusCode !== "number") return undefined;
   return value.statusCode;
 }
 
-function readErrorFields(value: unknown): Record<string, unknown> | undefined {
+function readErrorFields(value: unknown): UnknownRecord | undefined {
   if (!(value instanceof Error) && !isUnknownRecord(value)) return undefined;
   const entries = Object.entries(value).filter(([, entryValue]) => entryValue !== undefined);
   if (entries.length === 0) return undefined;

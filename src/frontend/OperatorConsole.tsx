@@ -1,37 +1,20 @@
 import { useMemo, useState, type ReactNode } from "react";
-import type { Manifest, RawModelOutput, SynthesizeSource } from "../types";
-
-type FetchLike = typeof fetch;
-
-type SynthesizeSuccess = {
-  manifest: Manifest;
-  signature: `0x${string}`;
-  raw: RawModelOutput[] | null;
-};
-
-type ApiError = {
-  error: string;
-  manifest?: Manifest;
-  signature?: `0x${string}`;
-  raw?: RawModelOutput[] | null;
-};
+import type { SynthesizeRequest, SynthesizeResponse } from "../types";
+import { isUnknownRecord } from "../lib/guards";
+import { isSynthesizeResponse } from "../lib/manifestGuards";
+import { resolveFrontendApiUrl } from "./runtimeConfig";
+import type { FetchLike, SubmitEventLike } from "./types";
 
 type OperatorConsoleProps = {
   fetchImpl?: FetchLike;
-};
-
-type FrontendRuntimeConfig = {
-  apiBaseUrl?: string;
 };
 
 type Status =
   | { kind: "idle" }
   | { kind: "client_error"; message: string }
   | { kind: "loading" }
-  | { kind: "api_error"; message: string; partial: SynthesizeSuccess | null }
-  | { kind: "success"; response: SynthesizeSuccess };
-
-type SubmitEvent = { preventDefault: () => void };
+  | { kind: "api_error"; message: string; partial: SynthesizeResponse | null }
+  | { kind: "success"; response: SynthesizeResponse };
 
 const SURFACE = "surface-card";
 const inputClassName = "form-input";
@@ -47,7 +30,7 @@ export function OperatorConsole({ fetchImpl = fetch }: OperatorConsoleProps) {
   const payload = useMemo(() => buildRequest(topic, urlText, sourceUrl, sourceText), [sourceText, sourceUrl, topic, urlText]);
   const response = status.kind === "success" ? status.response : status.kind === "api_error" ? status.partial : null;
 
-  async function onSubmit(event: SubmitEvent) {
+  async function onSubmit(event: SubmitEventLike) {
     event.preventDefault();
     const validation = validateRequest(payload);
     if (validation) {
@@ -57,24 +40,32 @@ export function OperatorConsole({ fetchImpl = fetch }: OperatorConsoleProps) {
 
     setStatus({ kind: "loading" });
 
-    const path = resolveSynthesizeUrl(includeRaw);
+    const path = resolveFrontendApiUrl("synthesize", { includeRaw });
     try {
       const res = await fetchImpl(path, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify(payload),
       });
-      const body = (await res.json()) as SynthesizeSuccess | ApiError;
+      const body: unknown = await res.json();
 
       if (!res.ok) {
         setStatus({
           kind: "api_error",
-          message: "error" in body ? body.error : `request_failed_${res.status}`,
-          partial: isPartialResponse(body) ? body : null,
+          message: readSynthesizeApiError(body, res.status),
+          partial: isSynthesizeResponse(body) ? body : null,
         });
         return;
       }
-      setStatus({ kind: "success", response: body as SynthesizeSuccess });
+      if (!isSynthesizeResponse(body)) {
+        setStatus({
+          kind: "api_error",
+          message: "The synthesis service returned an unexpected response shape.",
+          partial: null,
+        });
+        return;
+      }
+      setStatus({ kind: "success", response: body });
     } catch (error) {
       setStatus({
         kind: "api_error",
@@ -297,7 +288,7 @@ export function OperatorConsole({ fetchImpl = fetch }: OperatorConsoleProps) {
   );
 }
 
-function validateRequest(request: { topic: string; urls?: string[]; sources?: SynthesizeSource[] }): string | null {
+function validateRequest(request: SynthesizeRequest): string | null {
   if (request.topic.length === 0) return "Enter a topic before running synthesis.";
   if ((request.urls?.length ?? 0) + (request.sources?.length ?? 0) === 0) {
     return "Add at least one URL or source text before running synthesis.";
@@ -305,7 +296,7 @@ function validateRequest(request: { topic: string; urls?: string[]; sources?: Sy
   return null;
 }
 
-function buildRequest(topic: string, urlText: string, sourceUrl: string, sourceText: string): { topic: string; urls?: string[]; sources?: SynthesizeSource[] } {
+function buildRequest(topic: string, urlText: string, sourceUrl: string, sourceText: string): SynthesizeRequest {
   const urls = urlText
     .split("\n")
     .map((url) => url.trim())
@@ -319,42 +310,9 @@ function buildRequest(topic: string, urlText: string, sourceUrl: string, sourceT
   };
 }
 
-function resolveSynthesizeUrl(includeRaw: boolean): string {
-  const runtimeConfig = readFrontendRuntimeConfig();
-  const path = includeRaw ? "synthesize?include=raw" : "synthesize";
-
-  if (!runtimeConfig.apiBaseUrl?.trim()) {
-    return `/${path}`;
-  }
-
-  const base = runtimeConfig.apiBaseUrl.trim().replace(/\/+$/, "") + "/";
-
-  try {
-    return new URL(path, base).toString();
-  } catch {
-    return `/${path}`;
-  }
-}
-
-function readFrontendRuntimeConfig(): FrontendRuntimeConfig {
-  if (typeof document === "undefined") {
-    return {};
-  }
-
-  const script = document.getElementById("frontend-runtime-config");
-  if (!script?.textContent) {
-    return {};
-  }
-
-  try {
-    return JSON.parse(script.textContent) as FrontendRuntimeConfig;
-  } catch {
-    return {};
-  }
-}
-
-function isPartialResponse(value: SynthesizeSuccess | ApiError): value is SynthesizeSuccess {
-  return "manifest" in value && "signature" in value;
+function readSynthesizeApiError(value: unknown, status: number): string {
+  if (!isUnknownRecord(value)) return `request_failed_${status}`;
+  return typeof value.error === "string" ? value.error : `request_failed_${status}`;
 }
 
 function Metric({ label, value }: { label: string; value: string }) {

@@ -139,6 +139,7 @@ async function fetchUrlWithFirecrawl(url: string, fetchedAt: string, maxBytes: n
       error: null,
     };
   } catch {
+    // Firecrawl is optional enrichment; direct bounded fetch remains the authoritative fallback.
     return null;
   }
 }
@@ -177,6 +178,7 @@ function isPrivateOrLocalTarget(value: string): boolean {
     }
     return false;
   } catch {
+    // Fail closed: malformed targets must not be sent to a remote Firecrawl API.
     return true;
   }
 }

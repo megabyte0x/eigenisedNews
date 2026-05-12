@@ -66,6 +66,61 @@ afterEach(() => {
 });
 
 const factory = () => makeTestFactory({ baseURL: baseUrl });
+type GenerateTextResultForTest = Awaited<ReturnType<typeof ai.generateText>>;
+type GenerateTextResultOverrides = Omit<Partial<GenerateTextResultForTest>, "response"> & {
+  text: string;
+  response?: Partial<GenerateTextResultForTest["response"]>;
+};
+
+const emptyUsage: GenerateTextResultForTest["usage"] = {
+  inputTokens: undefined,
+  inputTokenDetails: {
+    noCacheTokens: undefined,
+    cacheReadTokens: undefined,
+    cacheWriteTokens: undefined,
+  },
+  outputTokens: undefined,
+  outputTokenDetails: {
+    textTokens: undefined,
+    reasoningTokens: undefined,
+  },
+  totalTokens: undefined,
+};
+
+function generateTextResult({ response, text, ...overrides }: GenerateTextResultOverrides): GenerateTextResultForTest {
+  const baseResponse: GenerateTextResultForTest["response"] = {
+    id: "test-response",
+    timestamp: new Date(0),
+    modelId: "test-model",
+    messages: [],
+  };
+  return {
+    content: [],
+    text,
+    reasoning: [],
+    reasoningText: undefined,
+    files: [],
+    sources: [],
+    toolCalls: [],
+    staticToolCalls: [],
+    dynamicToolCalls: [],
+    toolResults: [],
+    staticToolResults: [],
+    dynamicToolResults: [],
+    finishReason: "stop",
+    rawFinishReason: "stop",
+    usage: emptyUsage,
+    totalUsage: emptyUsage,
+    warnings: undefined,
+    request: {},
+    response: { ...baseResponse, ...response },
+    providerMetadata: undefined,
+    steps: [],
+    experimental_output: undefined,
+    output: undefined,
+    ...overrides,
+  };
+}
 
 describe("callModel", () => {
   test.each([
@@ -73,7 +128,7 @@ describe("callModel", () => {
     ["google", "gemini-2.5-pro"],
     ["anthropic", "claude-sonnet-4.6"],
   ])("omits provider options for %s", async (provider, model) => {
-    vi.mocked(ai.generateText).mockResolvedValue({ text: '{"claims":[],"summary":""}' } as Awaited<ReturnType<typeof ai.generateText>>);
+    vi.mocked(ai.generateText).mockResolvedValue(generateTextResult({ text: '{"claims":[],"summary":""}' }));
 
     await callModel({
       provider,
@@ -199,11 +254,11 @@ describe("callModel", () => {
   });
 
   test("classifies empty string model text as empty_response and preserves debug detail", async () => {
-    vi.mocked(ai.generateText).mockResolvedValue({ text: "" } as Awaited<ReturnType<typeof ai.generateText>>);
+    vi.mocked(ai.generateText).mockResolvedValue(generateTextResult({ text: "" }));
 
     const error = await callModel({
       provider: "anthropic",
-      model: "claude-opus-4.7",
+      model: "claude-sonnet-4.6",
       prompt: "hi",
       retries: 0,
       timeoutMs: 5000,
@@ -215,128 +270,15 @@ describe("callModel", () => {
     expect(extractCallErrorDebugInfo(error)).toEqual({
       code: "empty_response",
       provider: "anthropic",
-      model: "claude-opus-4.7",
+      model: "claude-sonnet-4.6",
       rawOutputSha256: sha256Hex(""),
       rawOutputByteLength: 0,
       rawOutput: "",
     });
   });
 
-  test("uses an Opus-only structured-output fallback invocation when blank text has no recoverable payload", async () => {
-    vi.mocked(ai.generateText)
-      .mockResolvedValueOnce({ text: "   ", content: [], response: { body: { content: [] } }, steps: [] } as unknown as Awaited<ReturnType<typeof ai.generateText>>)
-      .mockResolvedValueOnce({
-        text: "",
-        output: {
-          claims: [{ statement: "fallback", supportingSourceIndices: [0] }],
-          summary: "structured",
-        },
-      } as unknown as Awaited<ReturnType<typeof ai.generateText>>);
-
-    const result = await callModel({
-      provider: "anthropic",
-      model: "claude-opus-4.7",
-      prompt: "hi",
-      retries: 0,
-      timeoutMs: 5000,
-      modelFactory: factory(),
-    });
-
-    expect(result.rawOutput).toBe('{"claims":[{"statement":"fallback","supportingSourceIndices":[0]}],"summary":"structured"}');
-    expect(vi.mocked(ai.generateText)).toHaveBeenCalledTimes(2);
-    expect(vi.mocked(ai.generateText).mock.calls[1]?.[0]).toMatchObject({
-      prompt: "hi",
-      providerOptions: {
-        anthropic: {
-          structuredOutputMode: "jsonTool",
-        },
-      },
-      output: expect.anything(),
-    });
-  });
-
-  test("keeps blank-text debug evidence when the Opus structured-output fallback also fails", async () => {
-    vi.mocked(ai.generateText)
-      .mockResolvedValueOnce({ text: "" } as Awaited<ReturnType<typeof ai.generateText>>)
-      .mockRejectedValueOnce(new Error("structured fallback failed"));
-
-    const error = await callModel({
-      provider: "anthropic",
-      model: "claude-opus-4.7",
-      prompt: "hi",
-      retries: 0,
-      timeoutMs: 5000,
-      modelFactory: factory(),
-    }).catch((error_: unknown) => error_);
-
-    expect(error).toBeInstanceOf(Error);
-    expect(error).toMatchObject({ message: "empty_response" });
-    expect(extractCallErrorDebugInfo(error)).toEqual({
-      code: "empty_response",
-      provider: "anthropic",
-      model: "claude-opus-4.7",
-      rawOutputSha256: sha256Hex(""),
-      rawOutputByteLength: 0,
-      rawOutput: "",
-    });
-  });
-
-  test("recovers Opus payload from response.body when text is blank", async () => {
-    vi.mocked(ai.generateText).mockResolvedValue(({
-      text: "   ",
-      content: [],
-      response: {
-        body: {
-          content: [{ type: "text", text: '{"claims":[],"summary":"body"}' }],
-        },
-      },
-      steps: [],
-    }) as unknown as Awaited<ReturnType<typeof ai.generateText>>);
-
-    const result = await callModel({
-      provider: "anthropic",
-      model: "claude-opus-4.7",
-      prompt: "hi",
-      retries: 0,
-      timeoutMs: 5000,
-      modelFactory: factory(),
-    });
-
-    expect(result.rawOutput).toBe('{"claims":[],"summary":"body"}');
-  });
-
-  test("recovers Opus payload from step-level response body when top-level text is blank", async () => {
-    vi.mocked(ai.generateText).mockResolvedValue(({
-      text: "\n",
-      content: [],
-      response: { body: { content: [] } },
-      steps: [{
-        text: "",
-        content: [],
-        response: {
-          body: {
-            message: {
-              content: [{ type: "text", text: '{"claims":[],"summary":"step"}' }],
-            },
-          },
-        },
-      }],
-    }) as unknown as Awaited<ReturnType<typeof ai.generateText>>);
-
-    const result = await callModel({
-      provider: "anthropic",
-      model: "claude-opus-4.7",
-      prompt: "hi",
-      retries: 0,
-      timeoutMs: 5000,
-      modelFactory: factory(),
-    });
-
-    expect(result.rawOutput).toBe('{"claims":[],"summary":"step"}');
-  });
-
-  test("does not recover blank non-Opus text from response body", async () => {
-    vi.mocked(ai.generateText).mockResolvedValue(({
+  test("treats blank text as empty_response even if provider response has hidden body content", async () => {
+    vi.mocked(ai.generateText).mockResolvedValue(generateTextResult({
       text: " ",
       content: [],
       response: {
@@ -345,7 +287,7 @@ describe("callModel", () => {
         },
       },
       steps: [],
-    }) as unknown as Awaited<ReturnType<typeof ai.generateText>>);
+    }));
 
     const error = await callModel({
       provider: "anthropic",
@@ -370,14 +312,13 @@ describe("callModel", () => {
 
   test("retries empty_response and succeeds when a later attempt returns non-empty text", async () => {
     vi.mocked(ai.generateText)
-      .mockResolvedValueOnce({ text: "   " } as Awaited<ReturnType<typeof ai.generateText>>)
-      .mockRejectedValueOnce(new Error("structured fallback failed"))
-      .mockResolvedValueOnce({ text: '{"claims":[],"summary":""}' } as Awaited<ReturnType<typeof ai.generateText>>);
+      .mockResolvedValueOnce(generateTextResult({ text: "   " }))
+      .mockResolvedValueOnce(generateTextResult({ text: '{"claims":[],"summary":""}' }));
 
     const onDebugInfo = vi.fn();
     const result = await callModel({
       provider: "anthropic",
-      model: "claude-opus-4.7",
+      model: "claude-sonnet-4.6",
       prompt: "hi",
       retries: 1,
       timeoutMs: 5000,
@@ -386,11 +327,11 @@ describe("callModel", () => {
     });
 
     expect(result.rawOutput).toBe('{"claims":[],"summary":""}');
-    expect(vi.mocked(ai.generateText)).toHaveBeenCalledTimes(3);
+    expect(vi.mocked(ai.generateText)).toHaveBeenCalledTimes(2);
     expect(onDebugInfo).toHaveBeenCalledWith({
       code: "empty_response",
       provider: "anthropic",
-      model: "claude-opus-4.7",
+      model: "claude-sonnet-4.6",
       rawOutputSha256: sha256Hex("   "),
       rawOutputByteLength: Buffer.byteLength("   ", "utf8"),
       rawOutput: "   ",

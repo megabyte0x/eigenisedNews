@@ -2,11 +2,13 @@ import type { Request, Response } from "express";
 import { isUnknownRecord } from "../lib/guards";
 import { runSynthesis, type RunSynthesisDeps } from "../pipeline";
 import type { SynthesizeRequest, SynthesizeResponse } from "../types";
+import { shouldIncludeRaw } from "./query";
 
 type SourceInput = NonNullable<SynthesizeRequest["sources"]>[number];
+type SynthesizeErrorBody = { error: string } & Partial<SynthesizeResponse>;
 
 export function makeSynthesizeHandler(deps: RunSynthesisDeps) {
-  return async (req: Request<Record<string, never>, unknown, unknown>, res: Response): Promise<void> => {
+  return async (req: Request<Record<string, never>, SynthesizeResponse | SynthesizeErrorBody, unknown>, res: Response): Promise<void> => {
     const body = req.body;
     if (!isUnknownRecord(body)) {
       res.status(400).json({ error: "body_required" });
@@ -27,7 +29,7 @@ export function makeSynthesizeHandler(deps: RunSynthesisDeps) {
       return;
     }
 
-    const includeRaw = req.query.include === "raw" || req.query.include === "raw=1";
+    const includeRaw = shouldIncludeRaw(req);
     const response: SynthesizeResponse = {
       manifest: result.manifest,
       signature: result.signature,

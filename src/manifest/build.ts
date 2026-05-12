@@ -9,32 +9,37 @@ export type BuildResearchManifestInput = Omit<NewsResearchManifest, "schemaVersi
 const PLACEHOLDER_SHA256: Sha256 = "sha256:";
 
 export function hashManifestWithPlaceholder(m: Manifest): Sha256 {
-  return sha256OfCanonical({ ...m, manifestSha256: PLACEHOLDER_SHA256 });
+  return hashWithPlaceholder(m);
 }
 
 export function hashResearchManifestWithPlaceholder(m: NewsResearchManifest): Sha256 {
-  return sha256OfCanonical({ ...m, manifestSha256: PLACEHOLDER_SHA256 });
+  return hashWithPlaceholder(m);
 }
 
 export function buildManifest(input: BuildManifestInput): Manifest {
-  const withPlaceholder: Manifest = {
+  return finalizeSelfHashingManifest({
     schemaVersion: POLICY.SCHEMA_VERSION,
     rulesetVersion: POLICY.RULESET_VERSION,
     ...input,
     manifestSha256: PLACEHOLDER_SHA256,
-  };
-  withPlaceholder.manifestSha256 = sha256OfCanonical(withPlaceholder);
-  return withPlaceholder;
+  });
 }
 
 export function buildResearchManifest(input: BuildResearchManifestInput): NewsResearchManifest {
-  const withPlaceholder: NewsResearchManifest = {
+  return finalizeSelfHashingManifest({
     schemaVersion: POLICY.SCHEMA_VERSION,
     rulesetVersion: POLICY.RULESET_VERSION,
     kind: "research",
     ...input,
     manifestSha256: PLACEHOLDER_SHA256,
-  };
-  withPlaceholder.manifestSha256 = sha256OfCanonical(withPlaceholder);
-  return withPlaceholder;
+  });
+}
+
+function hashWithPlaceholder(manifest: { manifestSha256: Sha256 }): Sha256 {
+  return sha256OfCanonical({ ...manifest, manifestSha256: PLACEHOLDER_SHA256 });
+}
+
+function finalizeSelfHashingManifest<T extends { manifestSha256: Sha256 }>(manifest: T): T {
+  manifest.manifestSha256 = sha256OfCanonical(manifest);
+  return manifest;
 }

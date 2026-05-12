@@ -1,10 +1,9 @@
 import { describe, test, expect } from "vitest";
 import request from "supertest";
-import { privateKeyToAccount, generatePrivateKey } from "viem/accounts";
 import { buildApp } from "../src/index";
 import type { RunSynthesisDeps } from "../src/pipeline";
+import { makeRunSynthesisDeps, structuredModelOutput } from "./helpers/synthesisFixture";
 
-const FIXED_TS = "2026-04-27T12:00:00.000Z";
 const PRIOR_CORS_ALLOW_ORIGINS = process.env.CORS_ALLOW_ORIGINS;
 
 async function withCorsAllowOrigins(value: string, run: () => Promise<void>) {
@@ -18,36 +17,7 @@ async function withCorsAllowOrigins(value: string, run: () => Promise<void>) {
 }
 
 function makeApp(overrides: Partial<RunSynthesisDeps> = {}) {
-  const account = privateKeyToAccount(generatePrivateKey());
-  const deps: RunSynthesisDeps = {
-    fetchUrl: async (url) => ({
-      kind: "url",
-      url,
-      contentSha256: "sha256:0000000000000000000000000000000000000000000000000000000000000000",
-      text: `body of ${url}`,
-      fetchedAt: FIXED_TS,
-      byteLength: 16,
-      error: null,
-    }),
-    callModel: async ({ provider, model }) => ({
-      rawOutput: JSON.stringify({
-        claims: [{ statement: "the sky is blue", supportingSourceIndices: [0] }],
-        summary: `${provider}/${model}`,
-      }),
-      latencyMs: 5,
-    }),
-    now: () => FIXED_TS,
-    deployment: {
-      appId: "0xapp",
-      agentAddress: account.address,
-      imageDigest: "sha256:img",
-      commitSha: "abc",
-      environment: "local",
-    },
-    sign: (h) => account.signMessage({ message: h }),
-    ...overrides,
-  };
-  return buildApp(deps);
+  return buildApp(makeRunSynthesisDeps(overrides));
 }
 
 describe("POST /synthesize", () => {
@@ -95,7 +65,7 @@ describe("POST /synthesize", () => {
           calls++;
           if (calls <= 2) throw new Error("upstream_5xx_after_retries");
           return {
-            rawOutput: JSON.stringify({ claims: [{ statement: "x", supportingSourceIndices: [] }], summary: "s" }),
+            rawOutput: structuredModelOutput("x", "s", []),
             latencyMs: 5,
           };
         },

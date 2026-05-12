@@ -11,6 +11,7 @@
 
 import { readFileSync } from "node:fs";
 import { isUnknownRecord, type UnknownRecord } from "../src/lib/guards";
+import { parseUnknownJson } from "../src/lib/json";
 import { verifyResponse, isAllPass, isStrictPass } from "../src/verifier/verify";
 import { evidenceFromUnknownJson, makeEcloudProvenanceChecker } from "../src/verifier/provenance";
 
@@ -49,14 +50,14 @@ function parseArgs(argv: string[]): { path: string; refetch: boolean; strict: bo
 const { path, refetch, strict, useEcloud, provenanceJsonPath } = parseArgs(process.argv.slice(2));
 let response: unknown;
 try {
-  response = JSON.parse(readFileSync(path, "utf8"));
+  response = parseUnknownJson(readFileSync(path, "utf8"));
 } catch (e) {
   console.error("failed to read/parse response JSON:", e);
   process.exit(1);
 }
 
 const provenance = provenanceJsonPath
-  ? async () => evidenceFromUnknownJson(JSON.parse(readFileSync(provenanceJsonPath, "utf8")))
+  ? async () => evidenceFromUnknownJson(parseUnknownJson(readFileSync(provenanceJsonPath, "utf8")))
   : useEcloud
     ? makeEcloudProvenanceChecker()
     : undefined;

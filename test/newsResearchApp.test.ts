@@ -185,7 +185,9 @@ describe("NewsResearchApp", () => {
             imageDigest: "sha256:image",
             commitSha: "abc123",
             environment: "mainnet-alpha",
+            dashboardUrl: null,
             promptSourcePath: "src/pipeline.ts",
+            promptSourceUrl: null,
           },
           agentRuns: [],
           manifest: {
