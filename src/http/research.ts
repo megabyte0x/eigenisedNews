@@ -3,8 +3,10 @@ import { randomUUID } from "node:crypto";
 import { isUnknownRecord } from "../lib/guards";
 import { sha256Hex } from "../lib/hash";
 import { log } from "../lib/log";
+import { readUrlHost } from "../lib/url";
 import { runArticleResearch, type RunSynthesisDeps } from "../pipeline";
 import type { NewsResearchRequest, NewsResearchResponse } from "../types";
+import { shouldIncludeRaw } from "./query";
 
 type ResearchErrorBody = {
   error: string;
@@ -15,7 +17,7 @@ type ResearchErrorBody = {
 };
 
 export function makeResearchHandler(deps: RunSynthesisDeps) {
-  return async (req: Request<Record<string, never>, unknown, unknown>, res: Response): Promise<void> => {
+  return async (req: Request<Record<string, never>, NewsResearchResponse | ResearchErrorBody, unknown>, res: Response): Promise<void> => {
     const requestId = randomUUID();
     const startedAt = Date.now();
     const body = req.body;
@@ -61,7 +63,7 @@ export function makeResearchHandler(deps: RunSynthesisDeps) {
         return;
       }
 
-      const includeRaw = req.query.include === "raw" || req.query.include === "raw=1";
+      const includeRaw = shouldIncludeRaw(req);
       const { status: _status, raw, ...response } = result;
       const responseBody: NewsResearchResponse = {
         ...response,
@@ -88,14 +90,6 @@ export function makeResearchHandler(deps: RunSynthesisDeps) {
       sendResearchError(res, 502, "research_agent_failed", requestId);
     }
   };
-}
-
-function readUrlHost(value: string): string | null {
-  try {
-    return new URL(value).host;
-  } catch {
-    return null;
-  }
 }
 
 function sendResearchError(

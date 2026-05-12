@@ -18,7 +18,9 @@ import type {
 import { POLICY, providerModelKey, type ModelSpec } from "./lib/policy";
 import { sha256OfCanonical } from "./lib/canonicalHash";
 import { sha256Hex } from "./lib/hash";
+import { parseUnknownJson } from "./lib/json";
 import { log } from "./lib/log";
+import { isHttpUrl } from "./lib/url";
 import type { FetchUrlResult } from "./fetchers/sourceFetcher";
 import { hashText } from "./fetchers/sourceFetcher";
 import { renderPromptForModel } from "./fanout/structuredPrompt";
@@ -34,19 +36,6 @@ export type RunSynthesisDeps = {
   now: () => string;
   deployment: Manifest["deployment"];
   sign: ManifestSigner;
-  onStructuredOutputDebugInfo?: (info: StructuredOutputDebugInfo) => void;
-};
-
-export type { RawModelOutput } from "./types";
-
-export type StructuredOutputDebugInfo = {
-  code: "structured_output_not_pure_json";
-  provider: string;
-  model: string;
-  promptHash: Sha256;
-  rawOutputSha256: ReturnType<typeof sha256Hex>;
-  rawOutputByteLength: number;
-  rawOutput: string;
 };
 
 export type RunSynthesisResult =
@@ -127,23 +116,7 @@ export async function runSynthesis(deps: RunSynthesisDeps, request: SynthesizeRe
     try {
       const { rawOutput } = await deps.callModel({ provider: spec.provider, model: spec.model, prompt: promptText });
       const rawOutputSha256 = sha256Hex(rawOutput);
-      let parsed: StructuredClaim[];
-      try {
-        parsed = parseStructuredOutput(rawOutput).claims;
-      } catch (e) {
-        if (isOpusStructuredOutputFailure(spec, e)) {
-          invokeStructuredOutputDebugInfo(deps.onStructuredOutputDebugInfo, {
-            code: "structured_output_not_pure_json",
-            provider: spec.provider,
-            model: spec.model,
-            promptHash,
-            rawOutputSha256,
-            rawOutputByteLength: Buffer.byteLength(rawOutput, "utf8"),
-            rawOutput,
-          });
-        }
-        throw e;
-      }
+      const parsed = parseStructuredOutput(rawOutput).claims;
       fanoutResults.push({ ok: true, spec, promptHash, rawOutput, rawOutputSha256, parsedClaims: parsed });
     } catch (e) {
       fanoutResults.push({ ok: false, spec, promptHash, error: e instanceof Error ? e.message : String(e) });
@@ -574,35 +547,6 @@ function composeBrief(consensusClaims: Claim[], minorityClaims: Claim[]): string
   return lines.join("\n");
 }
 
-function isOpusStructuredOutputFailure(spec: ModelSpec, error: unknown): boolean {
-  const model = spec.model as string;
-  return spec.provider === "anthropic"
-    && model === "claude-opus-4.7"
-    && error instanceof Error
-    && error.message === "structured_output_not_pure_json";
-}
-
-function invokeStructuredOutputDebugInfo(
-  onStructuredOutputDebugInfo: RunSynthesisDeps["onStructuredOutputDebugInfo"],
-  info: StructuredOutputDebugInfo,
-): void {
-  if (!onStructuredOutputDebugInfo) return;
-  try {
-    onStructuredOutputDebugInfo(info);
-  } catch {
-    // Observability must not affect synthesis outcomes.
-  }
-}
-
-function isHttpUrl(value: string): boolean {
-  try {
-    const url = new URL(value);
-    return url.protocol === "http:" || url.protocol === "https:";
-  } catch {
-    return false;
-  }
-}
-
 function renderResearchPlannerPrompt(articleUrl: string, articleText: string): string {
   return [
     RESEARCH_PLANNER_SYSTEM_PROMPT,
@@ -668,12 +612,8 @@ function decodeHtmlEntities(text: string): string {
 }
 
 function decodeCodePoint(codePoint: number, fallback: string): string {
-  if (!Number.isFinite(codePoint)) return fallback;
-  try {
-    return String.fromCodePoint(codePoint);
-  } catch {
-    return fallback;
-  }
+  if (!Number.isInteger(codePoint) || codePoint < 0 || codePoint > 0x10ffff) return fallback;
+  return String.fromCodePoint(codePoint);
 }
 
 function renderPerspectiveResearchPrompt(role: "pro" | "contra", researchPrompt: string, articleUrl: string, articleText: string): string {
@@ -690,7 +630,7 @@ function renderPerspectiveResearchPrompt(role: "pro" | "contra", researchPrompt:
 export function parseResearchPrompts(rawOutput: string): { proPrompt: string; contraPrompt: string } {
   let parsed: unknown;
   try {
-    parsed = JSON.parse(extractStructuredOutputJson(rawOutput)) as unknown;
+    parsed = parseUnknownJson(extractStructuredOutputJson(rawOutput));
   } catch {
     throw new Error("research_prompt_parse_failed");
   }

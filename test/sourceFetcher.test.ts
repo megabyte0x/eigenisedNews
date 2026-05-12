@@ -2,6 +2,8 @@ import { describe, test, expect, beforeAll, afterAll } from "vitest";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
 import { fetchUrl, hashText } from "../src/fetchers/sourceFetcher";
+import { isUnknownRecord } from "../src/lib/guards";
+import { parseUnknownJson } from "../src/lib/json";
 
 let server: http.Server;
 let baseUrl: string;
@@ -58,7 +60,7 @@ beforeAll(async () => {
       req.setEncoding("utf8");
       req.on("data", (chunk) => { body += chunk; });
       req.on("end", () => {
-        const parsed = JSON.parse(body) as unknown;
+        const parsed = parseUnknownJson(body);
         firecrawlRequests.push(parsed);
         const requestedUrl = extractRequestUrl(parsed);
         if (requestedUrl.endsWith("/firecrawl-fails")) {
@@ -207,7 +209,7 @@ function restoreEnv(key: "FIRECRAWL_API_KEY" | "FIRECRAWL_API_URL", value: strin
 }
 
 function extractRequestUrl(value: unknown): string {
-  if (!value || typeof value !== "object" || !("url" in value)) return "";
-  const url = (value as { url?: unknown }).url;
+  if (!isUnknownRecord(value)) return "";
+  const url = value.url;
   return typeof url === "string" ? url : "";
 }

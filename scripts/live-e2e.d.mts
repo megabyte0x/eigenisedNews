@@ -1,8 +1,6 @@
-export type LiveE2eRequest = {
-  topic: string;
-  urls?: string[];
-  sources?: Array<{ url?: string; text: string }>;
-};
+import type { SynthesizeRequest, SynthesizeResponse } from "../src/types";
+
+export type LiveE2eRequest = SynthesizeRequest;
 
 export function buildLiveE2eRequest(args?: {
   topic?: string;
@@ -14,7 +12,7 @@ export function buildLiveE2eRequest(args?: {
 export function buildSynthesizeUrl(appUrl: string): string;
 
 export function assertLiveE2eResponse(response: unknown): {
-  successfulModels: number;
-  totalModels: number;
-  manifestSha256: string;
+  successfulModels: SynthesizeResponse["manifest"]["merge"]["successfulModels"];
+  totalModels: SynthesizeResponse["manifest"]["merge"]["totalModels"];
+  manifestSha256: SynthesizeResponse["manifest"]["manifestSha256"];
 };

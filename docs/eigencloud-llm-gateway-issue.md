@@ -210,4 +210,4 @@ Same body returned from `/v1/chat/completions` against:
 - LLM proxy client: <https://github.com/megabyte0x/eigenisedNews/blob/main/src/fanout/llmProxy.ts>
 - Notes on the assumed/empirical contract: <https://github.com/megabyte0x/eigenisedNews/blob/main/docs/llm-proxy-notes.md>
 
-The app is currently in `Stopped` state to avoid further compute billing on a non-functional deploy. Happy to restart on request and provide live logs.
+At filing time, the failing app was stopped to avoid continued compute billing on a non-functional deploy.

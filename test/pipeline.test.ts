@@ -2,45 +2,13 @@ import { describe, test, expect } from "vitest";
 import { privateKeyToAccount, generatePrivateKey } from "viem/accounts";
 import { runArticleResearch, runSynthesis, type RunSynthesisDeps } from "../src/pipeline";
 import { recoverManifestSigner } from "../src/manifest/sign";
-import { canonicalize } from "../src/lib/canonicalize";
-import { sha256OfBytes } from "../src/lib/hash";
+import { sha256OfCanonical } from "../src/lib/canonicalHash";
 import { POLICY } from "../src/lib/policy";
 import type { SynthesizeRequest } from "../src/types";
 import { renderPrompt, renderPromptForModel } from "../src/fanout/structuredPrompt";
+import { FIXED_TS, ZERO_SHA256, makeRunSynthesisDeps, structuredModelOutput } from "./helpers/synthesisFixture";
 
-const FIXED_TS = "2026-04-27T12:00:00.000Z";
-
-function makeDeps(overrides: Partial<RunSynthesisDeps> = {}): RunSynthesisDeps {
-  const account = privateKeyToAccount(generatePrivateKey());
-  return {
-    fetchUrl: async (url) => ({
-      kind: "url",
-      url,
-      contentSha256: "sha256:0000000000000000000000000000000000000000000000000000000000000000",
-      text: `body of ${url}`,
-      fetchedAt: FIXED_TS,
-      byteLength: 11 + url.length,
-      error: null,
-    }),
-    callModel: async ({ provider, model }) => ({
-      rawOutput: JSON.stringify({
-        claims: [{ statement: "the sky is blue", supportingSourceIndices: [0] }],
-        summary: `summary from ${provider}/${model}`,
-      }),
-      latencyMs: 10,
-    }),
-    now: () => FIXED_TS,
-    deployment: {
-      appId: "0xapp",
-      agentAddress: account.address,
-      imageDigest: "sha256:img",
-      commitSha: "abc",
-      environment: "local",
-    },
-    sign: (h) => account.signMessage({ message: h }),
-    ...overrides,
-  };
-}
+const makeDeps = makeRunSynthesisDeps;
 
 describe("runSynthesis", () => {
   test("validation: missing topic", async () => {
@@ -50,7 +18,7 @@ describe("runSynthesis", () => {
   });
 
   test("validation: neither urls nor sources", async () => {
-    const r = await runSynthesis(makeDeps(), { topic: "t" } as SynthesizeRequest);
+    const r = await runSynthesis(makeDeps(), { topic: "t" });
     expect(r.status).toBe("validation_error");
   });
 
@@ -77,7 +45,7 @@ describe("runSynthesis", () => {
         const pm = `${provider}/${model}`;
         const statement = pm === oddModel ? "the sea is salty" : "the sky is blue";
         return {
-          rawOutput: JSON.stringify({ claims: [{ statement, supportingSourceIndices: [0] }], summary: pm }),
+          rawOutput: structuredModelOutput(statement, pm),
           latencyMs: 5,
         };
       },
@@ -99,7 +67,7 @@ describe("runSynthesis", () => {
           : {
               kind: "url",
               url,
-              contentSha256: "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+              contentSha256: ZERO_SHA256,
               text: `body of ${url}`,
               fetchedAt: FIXED_TS,
               byteLength: 16,
@@ -123,7 +91,7 @@ describe("runSynthesis", () => {
         calls++;
         if (calls <= 2) throw new Error("upstream_5xx_after_retries");
         return {
-          rawOutput: JSON.stringify({ claims: [{ statement: "x", supportingSourceIndices: [] }], summary: "s" }),
+          rawOutput: structuredModelOutput("x", "s", []),
           latencyMs: 5,
         };
       },
@@ -147,7 +115,7 @@ describe("runSynthesis", () => {
     const req: SynthesizeRequest = { topic: "t", sources: [{ text: "src" }] };
     const r = await runSynthesis(deps, req);
     expect(r.status).toBe("ok");
-    const expected = sha256OfBytes(canonicalize(req));
+    const expected = sha256OfCanonical(req);
     expect(r.manifest!.request.requestHash).toBe(expected);
   });
 
@@ -165,7 +133,7 @@ describe("runSynthesis", () => {
       callModel: async ({ provider, model, prompt }) => {
         callPrompts.set(`${provider}/${model}`, prompt);
         return {
-          rawOutput: JSON.stringify({ claims: [{ statement: "x", supportingSourceIndices: [0] }], summary: "s" }),
+          rawOutput: structuredModelOutput("x", "s"),
           latencyMs: 5,
         };
       },

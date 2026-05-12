@@ -1,6 +1,6 @@
-export type FrontendRuntimeConfig = {
-  apiBaseUrl?: string;
-};
+import type { FrontendRuntimeConfig } from "./types";
+
+export type { FrontendRuntimeConfig } from "./types";
 
 export function renderFrontendShell(runtimeConfig: FrontendRuntimeConfig = {}): string {
   const runtimeConfigJson = JSON.stringify(runtimeConfig).replace(/</g, "\\u003c");

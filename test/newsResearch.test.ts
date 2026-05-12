@@ -136,7 +136,7 @@ describe("POST /research", () => {
 
   test("cleans and bounds HTML article context before model calls", async () => {
     const prompts: string[] = [];
-    const noisyHtml = `<!doctype html><html><head><title>Chrome</title><script>window.noise = true</script></head><body><article><h1>Operation Sindoor &amp; Pahalgam</h1><p>${"Evidence from the article. ".repeat(900)}</p></article></body></html>`;
+    const noisyHtml = `<!doctype html><html><head><title>Chrome</title><script>window.noise = true</script></head><body><article><h1>Operation Sindoor &amp; Pahalgam &#x1f4f0; &#99999999;</h1><p>${"Evidence from the article. ".repeat(900)}</p></article></body></html>`;
     const res = await request(makeApp({
       fetchUrl: async (url) => ({
         kind: "url",
@@ -165,7 +165,7 @@ describe("POST /research", () => {
 
     expect(res.status).toBe(200);
     expect(prompts).toHaveLength(3);
-    expect(prompts[0]).toContain("Operation Sindoor & Pahalgam");
+    expect(prompts[0]).toContain("Operation Sindoor & Pahalgam 📰 &#99999999;");
     expect(prompts[0]).toContain("truncated for research context");
     expect(prompts[0]).not.toContain("<script>");
     expect(prompts[0]).not.toContain("<article>");

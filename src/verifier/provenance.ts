@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { isUnknownRecord } from "../lib/guards";
+import { parseUnknownJson } from "../lib/json";
 import type { Manifest } from "../types";
 import type { CheckResult } from "./types";
 
@@ -82,8 +83,8 @@ export function makeEcloudProvenanceChecker(opts: { execFile?: ExecFileLike; tim
 
     return evidenceFromUnknownJson({
       appId: deployment.appId,
-      releases: JSON.parse(releases.stdout),
-      buildVerify: JSON.parse(verify.stdout),
+      releases: parseUnknownJson(releases.stdout),
+      buildVerify: parseUnknownJson(verify.stdout),
       appInfoText,
     });
   };

@@ -1,7 +1,5 @@
 # Verifier Implementation Plan
 
-> **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
-
 **Goal:** Finish the manifest verifier so a saved `/synthesize` response can be independently checked for manifest integrity, signer authenticity, input drift, raw model-output integrity, deterministic merge reproducibility, and EigenCompute provenance.
 
 **Architecture:** Keep verifier logic in `src/verifier/` and keep `scripts/verify-manifest.ts` as a thin CLI wrapper. Verification returns structured `CheckResult[]`; each check is independent and deterministic except explicitly-online provenance/input refetch checks. Use dependency injection for network fetchers so tests stay fast and do not depend on EigenCloud uptime.

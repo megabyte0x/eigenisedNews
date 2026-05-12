@@ -1,4 +1,4 @@
-export const DEFAULT_EIGEN_GATEWAY_URL = "https://ai-gateway-dev.eigencloud.xyz";
+const DEFAULT_EIGEN_GATEWAY_URL = "https://ai-gateway-dev.eigencloud.xyz";
 
 export type EigenGatewayEnv = Partial<Record<"EIGEN_GATEWAY_URL" | "EIGEN_GATEWAY_BASE_URL", string | undefined>>;
 

@@ -1,14 +1,13 @@
 import { useState, type ReactNode } from "react";
 import type { NewsResearchResponse } from "../types";
-
-type FetchLike = typeof fetch;
+import { isUnknownRecord } from "../lib/guards";
+import { isNewsResearchResponse } from "../lib/manifestGuards";
+import { isHttpUrl } from "../lib/url";
+import { resolveFrontendApiUrl } from "./runtimeConfig";
+import type { FetchLike, SubmitEventLike } from "./types";
 
 type NewsResearchAppProps = {
   fetchImpl?: FetchLike;
-};
-
-type FrontendRuntimeConfig = {
-  apiBaseUrl?: string;
 };
 
 type ResearchStatus =
@@ -17,8 +16,6 @@ type ResearchStatus =
   | { kind: "loading" }
   | { kind: "api_error"; message: string; code: string | null; requestId: string | null; retryable: boolean | null }
   | { kind: "success"; response: NewsResearchResponse };
-
-type FormSubmitEvent = { preventDefault: () => void };
 
 type ResearchApiError = {
   code: string | null;
@@ -40,7 +37,7 @@ export function NewsResearchApp({ fetchImpl = fetch }: NewsResearchAppProps) {
   const [articleUrl, setArticleUrl] = useState("");
   const [status, setStatus] = useState<ResearchStatus>({ kind: "idle" });
 
-  async function onSubmit(event: FormSubmitEvent) {
+  async function onSubmit(event: SubmitEventLike) {
     event.preventDefault();
     const trimmedArticleUrl = articleUrl.trim();
     if (!isHttpUrl(trimmedArticleUrl)) {
@@ -50,7 +47,7 @@ export function NewsResearchApp({ fetchImpl = fetch }: NewsResearchAppProps) {
 
     setStatus({ kind: "loading" });
     try {
-      const res = await fetchImpl(resolveResearchUrl({ includeRaw: true }), {
+      const res = await fetchImpl(resolveFrontendApiUrl("research", { includeRaw: true }), {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ articleUrl: trimmedArticleUrl }),
@@ -60,7 +57,17 @@ export function NewsResearchApp({ fetchImpl = fetch }: NewsResearchAppProps) {
         setStatus({ kind: "api_error", ...normalizeResearchApiError(body, res.status) });
         return;
       }
-      setStatus({ kind: "success", response: body as NewsResearchResponse });
+      if (!isNewsResearchResponse(body)) {
+        setStatus({
+          kind: "api_error",
+          code: "malformed_response",
+          message: "The research service returned an unexpected response shape.",
+          requestId: null,
+          retryable: false,
+        });
+        return;
+      }
+      setStatus({ kind: "success", response: body });
     } catch (error) {
       setStatus({
         kind: "api_error",
@@ -458,38 +465,6 @@ function ReadingBlock({ text, muted = false }: { text: string; muted?: boolean }
   );
 }
 
-function resolveResearchUrl(opts: { includeRaw?: boolean } = {}): string {
-  const runtimeConfig = readFrontendRuntimeConfig();
-  if (!runtimeConfig.apiBaseUrl?.trim()) return opts.includeRaw ? "/research?include=raw" : "/research";
-  const base = runtimeConfig.apiBaseUrl.trim().replace(/\/+$/, "") + "/";
-  try {
-    const url = new URL("research", base);
-    if (opts.includeRaw) url.searchParams.set("include", "raw");
-    return url.toString();
-  } catch {
-    return opts.includeRaw ? "/research?include=raw" : "/research";
-  }
-}
-
-function readFrontendRuntimeConfig(): FrontendRuntimeConfig {
-  const script = document.getElementById("frontend-runtime-config");
-  if (!script?.textContent) return {};
-  try {
-    return JSON.parse(script.textContent) as FrontendRuntimeConfig;
-  } catch {
-    return {};
-  }
-}
-
-function isHttpUrl(value: string): boolean {
-  try {
-    const url = new URL(value);
-    return url.protocol === "http:" || url.protocol === "https:";
-  } catch {
-    return false;
-  }
-}
-
 async function readResponseJson(response: Response): Promise<unknown> {
   try {
     return await response.json();
@@ -499,7 +474,7 @@ async function readResponseJson(response: Response): Promise<unknown> {
 }
 
 function normalizeResearchApiError(body: unknown, status: number): ResearchApiError {
-  if (isRecord(body)) {
+  if (isUnknownRecord(body)) {
     const rawError = body.error;
     const code = typeof rawError === "string" ? rawError : `request_failed_${status}`;
     return {
@@ -621,8 +596,4 @@ function labelForRole(role: string): string {
 
 function formatPerspective(value: string): string {
   return value.replace(/_/g, " ");
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
 }
