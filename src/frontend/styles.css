@@ -605,6 +605,17 @@ body::after {
   padding: 0.3rem;
 }
 
+.mode-switch--app {
+  width: min(100%, 34rem);
+  margin-bottom: 0;
+}
+
+.app-mode-panel {
+  display: flex;
+  flex-direction: column;
+  gap: clamp(1.25rem, 3vw, 2rem);
+}
+
 .mode-switch__button {
   border: 1px solid transparent;
   border-radius: var(--radius-pill);

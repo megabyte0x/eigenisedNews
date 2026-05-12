@@ -11,7 +11,8 @@ import type {
 import { isUnknownRecord } from "../lib/guards";
 import { isNewsResearchResponse, isResearchHistoryResponse } from "../lib/manifestGuards";
 import { isHttpUrl } from "../lib/url";
-import { resolveFrontendApiUrl, resolveFrontendHostedUrl } from "./runtimeConfig";
+import { OperatorConsole } from "./OperatorConsole";
+import { resolveFrontendApiUrl } from "./runtimeConfig";
 import type { FetchLike, SubmitEventLike } from "./types";
 import type { CheckResult } from "../verifier/types";
 
@@ -77,9 +78,12 @@ type FormattedBlock =
 
 const SURFACE = "surface-card";
 const inputClassName = "form-input";
+const HOSTED_AGENT_SKILL_URL = "https://eigenised-news.vercel.app/skill.md";
+type AppMode = "research" | "synthesis";
 type HeroAudience = "readers" | "agents";
 
 export function NewsResearchApp({ fetchImpl = fetch }: NewsResearchAppProps) {
+  const [appMode, setAppMode] = useState<AppMode>("research");
   const [articleUrl, setArticleUrl] = useState("");
   const [heroAudience, setHeroAudience] = useState<HeroAudience>("readers");
   const [status, setStatus] = useState<ResearchStatus>({ kind: "idle" });
@@ -351,182 +355,221 @@ export function NewsResearchApp({ fetchImpl = fetch }: NewsResearchAppProps) {
   }
 
   const response = status.kind === "success" ? status.response : null;
-  const hostedSkillUrl = resolveFrontendHostedUrl("skill.md");
+  const hostedSkillUrl = HOSTED_AGENT_SKILL_URL;
   const agentPrompt = buildAgentPrompt(hostedSkillUrl, articleUrl);
 
   return (
     <div className="app-shell">
       <div className="app-shell__inner app-shell__inner--spacious">
-        <header className={`${SURFACE} surface-card--hero`}>
-          <div className="surface-card__body surface-card__body--hero hero-grid">
-            <div>
-              <p className="hero-kicker">The Eigenised Gazette</p>
-              <h1 className="hero-title">News Article Research</h1>
-              <div className="edition-line" aria-label="Newspaper edition metadata">
-                <span>Daily proof desk</span>
-                <span>Est. 2026</span>
-                <span>Adversarial edition</span>
-              </div>
-              <p className="hero-copy">
-                Send one news URL. The main agent sets the assignment, then pro and contra correspondents file evidence-backed columns from the same source.
-              </p>
-            </div>
-            <div className="hero-actions">
-              <div className="stack-md">
-                <div className="hero-actions__row">
-                  <a
-                    aria-label="Open the EigenCloud app dashboard in a new tab"
-                    className="hero-action-link"
-                    href="https://verify.eigencloud.xyz/app/0x62B98291bdaab3FE0E12b4693e6D79f391501437"
-                    rel="noopener noreferrer"
-                    target="_blank"
-                  >
-                    View app dashboard
-                  </a>
+        <AppModeSwitch mode={appMode} onSelect={setAppMode} />
+
+        {appMode === "synthesis" ? (
+          <div aria-labelledby="synthesis-console-tab" id="synthesis-console-panel" role="tabpanel">
+            <OperatorConsole fetchImpl={fetchImpl} frame="embedded" />
+          </div>
+        ) : (
+          <div aria-labelledby="article-research-tab" className="app-mode-panel" id="article-research-panel" role="tabpanel">
+            <header className={`${SURFACE} surface-card--hero`}>
+              <div className="surface-card__body surface-card__body--hero hero-grid">
+                <div>
+                  <p className="hero-kicker">The Eigenised Gazette</p>
+                  <h1 className="hero-title">News Article Research</h1>
+                  <div className="edition-line" aria-label="Newspaper edition metadata">
+                    <span>Daily proof desk</span>
+                    <span>Est. 2026</span>
+                    <span>Adversarial edition</span>
+                  </div>
+                  <p className="hero-copy">
+                    Send one news URL. The main agent sets the assignment, then pro and contra correspondents file evidence-backed columns from the same source.
+                  </p>
                 </div>
-                <HeroAudiencePanel
-                  mode={heroAudience}
-                  onSelect={setHeroAudience}
-                  prompt={agentPrompt}
-                  skillUrl={hostedSkillUrl}
-                />
+                <div className="hero-actions">
+                  <div className="stack-md">
+                    <div className="hero-actions__row">
+                      <a
+                        aria-label="Open the EigenCloud app dashboard in a new tab"
+                        className="hero-action-link"
+                        href="https://verify.eigencloud.xyz/app/0x62B98291bdaab3FE0E12b4693e6D79f391501437"
+                        rel="noopener noreferrer"
+                        target="_blank"
+                      >
+                        View app dashboard
+                      </a>
+                    </div>
+                    <HeroAudiencePanel
+                      mode={heroAudience}
+                      onSelect={setHeroAudience}
+                      prompt={agentPrompt}
+                      skillUrl={hostedSkillUrl}
+                    />
+                  </div>
+                </div>
               </div>
+            </header>
+
+            <div className="panel-grid panel-grid--research">
+              <section className={`${SURFACE} section-card section-card--input`}>
+                <div className="surface-card__body">
+                  <div className="section-header">
+                    <p className="section-kicker">Input</p>
+                    <h2 className="section-title">Research a URL</h2>
+                    <p className="section-description">Start one article now, or add one link at a time to the side queue while another report is still running.</p>
+                  </div>
+
+                  <form className="form-stack" onSubmit={onSubmit}>
+                    <label className="field-group">
+                      <span className="field-label">News article URL</span>
+                      <input
+                        aria-label="News article URL"
+                        className={inputClassName}
+                        onChange={(event) => setArticleUrl(event.target.value)}
+                        placeholder="https://example.com/news/story"
+                        value={articleUrl}
+                      />
+                    </label>
+
+                    {status.kind === "client_error" || status.kind === "api_error" ? (
+                      <div aria-live="assertive" className="banner banner--danger" role="alert">
+                        <p className="banner__title">Research request{status.kind === "api_error" && status.code ? ` · ${status.code}` : ""}</p>
+                        <p className="banner__body">{status.message}</p>
+                        {status.kind === "api_error" && status.requestId ? (
+                          <p className="banner__body">Request ID: <code>{status.requestId}</code>{status.retryable ? " · retryable" : ""}</p>
+                        ) : null}
+                      </div>
+                    ) : null}
+
+                    <QueueFeedback queueStatus={queueStatus} />
+
+                    {status.kind === "loading" ? (
+                      <p aria-live="polite" className="status-copy">
+                        Research in progress. Paste another URL and add it to the queue without interrupting this run.
+                      </p>
+                    ) : null}
+
+                    <div className="research-actions">
+                      <button className="button-primary" disabled={status.kind === "loading"} type="submit">
+                        {status.kind === "loading" ? "Researching…" : "Research both sides"}
+                      </button>
+                      <button
+                        className="button-ghost button-ghost--plain queue-enqueue-button"
+                        disabled={queueStatus.kind === "loading"}
+                        onClick={() => void onQueueCurrentArticle()}
+                        type="button"
+                      >
+                        {queueStatus.kind === "loading" ? "Adding to queue…" : "Add to side queue"}
+                      </button>
+                    </div>
+
+                    <ResearchFlow status={status.kind} />
+                  </form>
+                </div>
+              </section>
+
+              <section className={`${SURFACE} section-card section-card--results`}>
+                <div className="surface-card__body">
+                  <div className="section-header">
+                    <p className="section-kicker">Results</p>
+                    <h2 className="section-title">For and against</h2>
+                    <p className="section-description">Perspective-agent output from the same article context, styled for reading before diagnostics.</p>
+                  </div>
+
+                  {response ? (
+                    <div className="result-stack">
+                      <ResultDocket response={response} />
+                      <MainSummaryPanel text={response.mainSummary} />
+                      <ArticleTracePanel article={response.article} build={response.verifiableBuild} />
+                      <VerificationGuidePanel fetchImpl={fetchImpl} response={response} />
+                      <div className="perspective-compare" aria-label="Side-by-side perspective comparison">
+                        <PerspectivePanel
+                          title="For the article"
+                          subtitle="Evidence that reinforces the article's framing"
+                          tone="support"
+                          text={response.proAnalysis}
+                        />
+                        <PerspectivePanel
+                          title="Against the article"
+                          subtitle="Evidence that challenges or complicates the framing"
+                          tone="challenge"
+                          text={response.contraAnalysis}
+                        />
+                      </div>
+                      <PromptProvenancePanel response={response} />
+                      <details className="disclosure">
+                        <summary className="disclosure__summary">
+                          <span className="disclosure__summary-copy">
+                            <span className="section-kicker disclosure__summary-kicker">Diagnostics</span>
+                            <span className="disclosure__title">Agent prompts and runs</span>
+                          </span>
+                          <span className="disclosure__meta">JSON payload</span>
+                        </summary>
+                        <div className="disclosure__content">
+                          <pre className="code-block">
+                            {JSON.stringify({
+                              proPrompt: response.proPrompt,
+                              contraPrompt: response.contraPrompt,
+                              promptBindings: response.promptBindings,
+                              verifiableBuild: response.verifiableBuild,
+                              agentRuns: response.agentRuns,
+                            }, null, 2)}
+                          </pre>
+                        </div>
+                      </details>
+                    </div>
+                  ) : (
+                    <div className="empty-state">No article research yet. Submit a URL to generate both perspectives.</div>
+                  )}
+                </div>
+              </section>
+
+              <aside className={`${SURFACE} section-card section-card--queue`} aria-label="Queued article research side rail">
+                <div className="surface-card__body">
+                  <QueueSnapshotPanel
+                    queueSnapshot={queueSnapshot}
+                    queueStatus={queueStatus}
+                    selectedJobId={selectedQueuedJobId}
+                    onOpenJob={openQueuedJob}
+                    onRefresh={() => void refreshQueue()}
+                  />
+                  <PreviousResearchPanel
+                    historyStatus={historyStatus}
+                    onOpen={openStoredReport}
+                    selectedManifestHash={response?.manifest.manifestSha256 ?? null}
+                  />
+                </div>
+              </aside>
             </div>
           </div>
-        </header>
-
-        <div className="panel-grid panel-grid--research">
-          <section className={`${SURFACE} section-card section-card--input`}>
-            <div className="surface-card__body">
-              <div className="section-header">
-                <p className="section-kicker">Input</p>
-                <h2 className="section-title">Research a URL</h2>
-                <p className="section-description">Start one article now, or add one link at a time to the side queue while another report is still running.</p>
-              </div>
-
-              <form className="form-stack" onSubmit={onSubmit}>
-                <label className="field-group">
-                  <span className="field-label">News article URL</span>
-                  <input
-                    aria-label="News article URL"
-                    className={inputClassName}
-                    onChange={(event) => setArticleUrl(event.target.value)}
-                    placeholder="https://example.com/news/story"
-                    value={articleUrl}
-                  />
-                </label>
-
-                {status.kind === "client_error" || status.kind === "api_error" ? (
-                  <div aria-live="assertive" className="banner banner--danger" role="alert">
-                    <p className="banner__title">Research request{status.kind === "api_error" && status.code ? ` · ${status.code}` : ""}</p>
-                    <p className="banner__body">{status.message}</p>
-                    {status.kind === "api_error" && status.requestId ? (
-                      <p className="banner__body">Request ID: <code>{status.requestId}</code>{status.retryable ? " · retryable" : ""}</p>
-                    ) : null}
-                  </div>
-                ) : null}
-
-                <QueueFeedback queueStatus={queueStatus} />
-
-                {status.kind === "loading" ? (
-                  <p aria-live="polite" className="status-copy">
-                    Research in progress. Paste another URL and add it to the queue without interrupting this run.
-                  </p>
-                ) : null}
-
-                <div className="research-actions">
-                  <button className="button-primary" disabled={status.kind === "loading"} type="submit">
-                    {status.kind === "loading" ? "Researching…" : "Research both sides"}
-                  </button>
-                  <button
-                    className="button-ghost button-ghost--plain queue-enqueue-button"
-                    disabled={queueStatus.kind === "loading"}
-                    onClick={() => void onQueueCurrentArticle()}
-                    type="button"
-                  >
-                    {queueStatus.kind === "loading" ? "Adding to queue…" : "Add to side queue"}
-                  </button>
-                </div>
-
-                <ResearchFlow status={status.kind} />
-              </form>
-            </div>
-          </section>
-
-          <section className={`${SURFACE} section-card section-card--results`}>
-            <div className="surface-card__body">
-              <div className="section-header">
-                <p className="section-kicker">Results</p>
-                <h2 className="section-title">For and against</h2>
-                <p className="section-description">Perspective-agent output from the same article context, styled for reading before diagnostics.</p>
-              </div>
-
-              {response ? (
-                <div className="result-stack">
-                  <ResultDocket response={response} />
-                  <MainSummaryPanel text={response.mainSummary} />
-                  <ArticleTracePanel article={response.article} build={response.verifiableBuild} />
-                  <VerificationGuidePanel fetchImpl={fetchImpl} response={response} />
-                  <div className="perspective-compare" aria-label="Side-by-side perspective comparison">
-                    <PerspectivePanel
-                      title="For the article"
-                      subtitle="Evidence that reinforces the article's framing"
-                      tone="support"
-                      text={response.proAnalysis}
-                    />
-                    <PerspectivePanel
-                      title="Against the article"
-                      subtitle="Evidence that challenges or complicates the framing"
-                      tone="challenge"
-                      text={response.contraAnalysis}
-                    />
-                  </div>
-                  <PromptProvenancePanel response={response} />
-                  <details className="disclosure">
-                    <summary className="disclosure__summary">
-                      <span className="disclosure__summary-copy">
-                        <span className="section-kicker disclosure__summary-kicker">Diagnostics</span>
-                        <span className="disclosure__title">Agent prompts and runs</span>
-                      </span>
-                      <span className="disclosure__meta">JSON payload</span>
-                    </summary>
-                    <div className="disclosure__content">
-                      <pre className="code-block">
-                        {JSON.stringify({
-                          proPrompt: response.proPrompt,
-                          contraPrompt: response.contraPrompt,
-                          promptBindings: response.promptBindings,
-                          verifiableBuild: response.verifiableBuild,
-                          agentRuns: response.agentRuns,
-                        }, null, 2)}
-                      </pre>
-                    </div>
-                  </details>
-                </div>
-              ) : (
-                <div className="empty-state">No article research yet. Submit a URL to generate both perspectives.</div>
-              )}
-            </div>
-          </section>
-
-          <aside className={`${SURFACE} section-card section-card--queue`} aria-label="Queued article research side rail">
-            <div className="surface-card__body">
-              <QueueSnapshotPanel
-                queueSnapshot={queueSnapshot}
-                queueStatus={queueStatus}
-                selectedJobId={selectedQueuedJobId}
-                onOpenJob={openQueuedJob}
-                onRefresh={() => void refreshQueue()}
-              />
-              <PreviousResearchPanel
-                historyStatus={historyStatus}
-                onOpen={openStoredReport}
-                selectedManifestHash={response?.manifest.manifestSha256 ?? null}
-              />
-            </div>
-          </aside>
-        </div>
+        )}
       </div>
+    </div>
+  );
+}
+
+function AppModeSwitch({ mode, onSelect }: { mode: AppMode; onSelect: (mode: AppMode) => void }) {
+  return (
+    <div className="mode-switch mode-switch--app" role="tablist" aria-label="Application mode">
+      <button
+        aria-controls="article-research-panel"
+        aria-selected={mode === "research"}
+        className={`mode-switch__button ${mode === "research" ? "mode-switch__button--active" : ""}`}
+        id="article-research-tab"
+        onClick={() => onSelect("research")}
+        role="tab"
+        type="button"
+      >
+        Article research
+      </button>
+      <button
+        aria-controls="synthesis-console-panel"
+        aria-selected={mode === "synthesis"}
+        className={`mode-switch__button ${mode === "synthesis" ? "mode-switch__button--active" : ""}`}
+        id="synthesis-console-tab"
+        onClick={() => onSelect("synthesis")}
+        role="tab"
+        type="button"
+      >
+        Open synthesis console
+      </button>
     </div>
   );
 }

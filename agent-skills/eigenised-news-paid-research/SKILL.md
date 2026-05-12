@@ -21,11 +21,17 @@ If your agent supports MCP-based skill discovery, add the Agent Skills MCP serve
 }
 ```
 
-After adding the MCP server, search for `eigenised-news-paid-research` or open the service’s `GET /skill.md` endpoint and save this file as a local agent skill.
+After adding the MCP server, search for `eigenised-news-paid-research` or fetch the canonical hosted skill at:
+
+```text
+https://eigenised-news.vercel.app/skill.md
+```
+
+Save the fetched Markdown as a local agent skill when MCP installation is unavailable.
 
 ## Required inputs
 
-- `EIGENISED_NEWS_BASE_URL` — deployed service origin, for example `http://<ecloud-ip>:3000` or a custom HTTPS domain.
+- `EIGENISED_NEWS_BASE_URL` — deployed service origin. Use `https://eigenised-news.vercel.app` by default, or override with `http://<ecloud-ip>:3000` / another custom HTTPS domain for a specific deployment.
 - An x402-compatible wallet/client, or an MPP-compatible Tempo client.
 - A public HTTP(S) news article URL.
 

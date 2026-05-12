@@ -7,6 +7,7 @@ import type { FetchLike, SubmitEventLike } from "./types";
 
 type OperatorConsoleProps = {
   fetchImpl?: FetchLike;
+  frame?: "page" | "embedded";
 };
 
 type Status =
@@ -19,7 +20,7 @@ type Status =
 const SURFACE = "surface-card";
 const inputClassName = "form-input";
 
-export function OperatorConsole({ fetchImpl = fetch }: OperatorConsoleProps) {
+export function OperatorConsole({ fetchImpl = fetch, frame = "page" }: OperatorConsoleProps) {
   const [topic, setTopic] = useState("");
   const [urlText, setUrlText] = useState("");
   const [sourceUrl, setSourceUrl] = useState("");
@@ -75,8 +76,8 @@ export function OperatorConsole({ fetchImpl = fetch }: OperatorConsoleProps) {
     }
   }
 
-  return (
-    <div className="app-shell__inner app-shell__inner--spacious">
+  const content = (
+    <>
       <header className={`${SURFACE} surface-card--console`}>
         <div className="surface-card__body surface-card__body--hero hero-grid">
           <div>
@@ -284,8 +285,12 @@ export function OperatorConsole({ fetchImpl = fetch }: OperatorConsoleProps) {
           </div>
         </section>
       </div>
-    </div>
+    </>
   );
+
+  if (frame === "embedded") return content;
+
+  return <div className="app-shell__inner app-shell__inner--spacious">{content}</div>;
 }
 
 function validateRequest(request: SynthesizeRequest): string | null {

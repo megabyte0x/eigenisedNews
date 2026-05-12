@@ -90,9 +90,9 @@ describe("NewsResearchApp", () => {
     expect(forAgentsTab).toHaveAttribute("aria-selected", "true");
     expect(screen.getByText(/Agent handoff/i)).toBeInTheDocument();
     const prompt = screen.getByText(/Use the following skill/);
-    expect(prompt.textContent).toContain("https://api.example/skill.md");
+    expect(prompt.textContent).toContain("https://eigenised-news.vercel.app/skill.md");
     expect(prompt.textContent).toContain("<ARTICLE_URL>");
-    expect(screen.getByRole("link", { name: /open hosted skill/i })).toHaveAttribute("href", "https://api.example/skill.md");
+    expect(screen.getByRole("link", { name: /open hosted skill/i })).toHaveAttribute("href", "https://eigenised-news.vercel.app/skill.md");
 
     fireEvent.change(screen.getByLabelText(/news article url/i), { target: { value: "https://news.example/story" } });
 
@@ -554,10 +554,25 @@ describe("NewsResearchApp", () => {
     expect(container.textContent).not.toContain("## Supporting Evidence");
   });
 
-  test("does not expose the synthesis console from the research UI", () => {
-    render(React.createElement(NewsResearchApp, { fetchImpl: vi.fn<typeof fetch>() }));
+  test("exposes the synthesis console as a secondary UI mode", () => {
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse(historyResponse()));
+    render(React.createElement(NewsResearchApp, { fetchImpl }));
 
-    expect(screen.queryByRole("button", { name: /open synthesis console/i })).not.toBeInTheDocument();
+    const researchTab = screen.getByRole("tab", { name: /article research/i });
+    const synthesisTab = screen.getByRole("tab", { name: /open synthesis console/i });
+
+    expect(researchTab).toHaveAttribute("aria-selected", "true");
     expect(screen.queryByRole("heading", { name: /compose request/i })).not.toBeInTheDocument();
+
+    fireEvent.click(synthesisTab);
+
+    expect(synthesisTab).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("heading", { name: /compose request/i })).toBeInTheDocument();
+    expect(screen.getByText((_, element) => element?.textContent === "POST /synthesize")).toBeInTheDocument();
+
+    fireEvent.click(researchTab);
+
+    expect(researchTab).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("heading", { name: /research a url/i })).toBeInTheDocument();
   });
 });
