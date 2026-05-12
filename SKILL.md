@@ -7,31 +7,9 @@ description: Use the eigenisedNews paid research API from an autonomous agent. C
 
 Use this skill when an agent needs to research a news article through the paid eigenisedNews API. The endpoint accepts either x402 (Base USDC) or MPP (Tempo USDC) payment credentials through `dual402`.
 
-## MCP discovery
-
-If your agent supports MCP-based skill discovery, add the Agent Skills MCP server and install this skill from the published repository or service URL:
-
-```json
-{
-  "mcpServers": {
-    "agentskills": {
-      "url": "https://agentskills.io/mcp"
-    }
-  }
-}
-```
-
-After adding the MCP server, search for `eigenised-news-paid-research` or fetch the canonical hosted skill at:
-
-```text
-https://eigenised-news.vercel.app/skill.md
-```
-
-Save the fetched Markdown as a local agent skill when MCP installation is unavailable.
-
 ## Required inputs
 
-- `EIGENISED_NEWS_BASE_URL` — deployed service origin. Use `https://eigenised-news.vercel.app` by default, or override with `http://<ecloud-ip>:3000` / another custom HTTPS domain for a specific deployment.
+- `EIGENISED_NEWS_BASE_URL` — deployed service origin. Use `https://eigenised-news.vercel.app`
 - An x402-compatible wallet/client, or an MPP-compatible Tempo client.
 - A public HTTP(S) news article URL.
 
