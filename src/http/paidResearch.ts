@@ -92,6 +92,7 @@ export function mountPaidResearchApi(app: Express, deps: RunSynthesisDeps, env: 
     mountPaidResearchSupportRoutes(app, deps.deployment, env, status, options.researchStore?.info);
     const message = `paid research payment config missing: ${configResult.missing.join(", ")}`;
     if (mode === "enabled") throw new Error(message);
+    mountPaidResearchUnavailableRoute(app, status);
     if (shouldLogAutoDisabled(env, mode)) {
       log("warn", "paid_research_disabled", { route: PAID_RESEARCH_PATH, mode, missing: configResult.missing });
     }
@@ -160,9 +161,30 @@ export function mountPaidResearchApi(app: Express, deps: RunSynthesisDeps, env: 
     status = { ...status, error: message, payment: configResult.value.publicConfig };
     mountPaidResearchSupportRoutes(app, deps.deployment, env, status, options.researchStore?.info);
     if (mode === "enabled") throw error;
+    mountPaidResearchUnavailableRoute(app, status);
     if (shouldLogAutoDisabled(env, mode)) log("warn", "paid_research_disabled", { route: PAID_RESEARCH_PATH, mode, error: message });
     return status;
   }
+}
+
+function mountPaidResearchUnavailableRoute(app: Express, status: PaidResearchMountStatus): void {
+  app.post(PAID_RESEARCH_PATH, (_req, res) => {
+    res.status(503).json({
+      error: "paid_research_config_missing",
+      message: [
+        "The paid research endpoint is installed but payment is not enabled for this deployment.",
+        "Set the missing payment environment variables, then redeploy.",
+      ].join(" "),
+      payment: {
+        enabled: false,
+        mode: status.mode,
+        price: { amount: status.priceUsd, currency: "USDC" },
+        missing: status.missing,
+        error: status.error,
+      },
+      verify: "/verify",
+    });
+  });
 }
 
 function mountPaidResearchSupportRoutes(app: Express, deployment: Manifest["deployment"], env: NodeJS.ProcessEnv, status: PaidResearchMountStatus, storageInfo: ResearchStorageInfo | undefined): void {

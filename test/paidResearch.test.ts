@@ -223,6 +223,28 @@ describe("dual402 paid research API", () => {
     });
   });
 
+  test("auto mode keeps /api/research discoverable when payment config is incomplete", async () => {
+    await withPaymentEnv({ PAID_RESEARCH_ENABLED: "auto" }, async () => {
+      const app = buildApp(makeDeps());
+
+      const verify = await request(app).get("/verify");
+      expect(verify.status).toBe(200);
+      expect(verify.body.payment.enabled).toBe(false);
+      expect(verify.body.payment.missing).toContain("USDC_TEMPO");
+
+      const res = await request(app)
+        .post("/api/research")
+        .send({ articleUrl: "https://news.example/story" });
+
+      expect(res.status).toBe(503);
+      expect(res.body.error).toBe("paid_research_config_missing");
+      expect(res.body.payment.enabled).toBe(false);
+      expect(res.body.payment.missing).toContain("USDC_TEMPO");
+      expect(res.body.verify).toBe("/verify");
+      expect(res.text).not.toContain("Cannot POST /api/research");
+    });
+  });
+
   test("explicitly enabled paid research fails closed when payment config is incomplete", async () => {
     await withPaymentEnv({ PAID_RESEARCH_ENABLED: "true" }, async () => {
       expect(() => buildApp(makeDeps())).toThrow(/paid research payment config missing/i);
