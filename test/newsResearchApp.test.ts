@@ -26,6 +26,57 @@ function historyResponse(entries: unknown[] = []): unknown {
   return { entries, storage: TEST_STORAGE_INFO };
 }
 
+function makeResearchResponse(articleUrl: string, mainSummary = "Queued summary ready."): unknown {
+  return {
+    article: { url: articleUrl, contentSha256: "sha256:article", fetchedAt: "2026-05-07T00:00:00.000Z", byteLength: 1200, error: null },
+    proPrompt: "Support the article.",
+    contraPrompt: "Challenge the article.",
+    proAnalysis: "Queued pro analysis ready.",
+    contraAnalysis: "Queued contra analysis ready.",
+    mainSummary,
+    promptBindings: [],
+    verifiableBuild: {
+      appId: "0xapp",
+      agentAddress: "0xagent",
+      imageDigest: "sha256:image",
+      commitSha: "abc123",
+      environment: "local",
+      dashboardUrl: null,
+      promptSourcePath: "src/pipeline.ts",
+      promptSourceUrl: null,
+    },
+    agentRuns: [],
+    manifest: {
+      schemaVersion: "1",
+      rulesetVersion: "v1",
+      kind: "research",
+      deployment: {
+        appId: "0xapp",
+        agentAddress: "0xagent",
+        imageDigest: "sha256:image",
+        commitSha: "abc123",
+        environment: "local",
+      },
+      request: { articleUrl, requestHash: "sha256:request" },
+      article: { url: articleUrl, contentSha256: "sha256:article", fetchedAt: "2026-05-07T00:00:00.000Z", byteLength: 1200, error: null },
+      promptBindings: [],
+      agentRuns: [],
+      outputs: {
+        proPromptSha256: "sha256:pro-prompt",
+        contraPromptSha256: "sha256:contra-prompt",
+        proAnalysisSha256: "sha256:pro-raw",
+        contraAnalysisSha256: "sha256:contra-raw",
+        mainSummarySha256: "sha256:summary",
+        summaryAlgorithm: "mainAgentSummary/v1",
+      },
+      timestamp: "2026-05-07T00:00:00.000Z",
+      manifestSha256: `sha256:${articleUrl.includes("two") ? "two" : "one"}researchmanifest000000000000000000000000000000000000000000`,
+    },
+    signature: "0xsigned",
+    raw: null,
+  };
+}
+
 describe("NewsResearchApp", () => {
   test("renders the URL-first research flow", async () => {
     const researchResponse = {
@@ -309,6 +360,84 @@ describe("NewsResearchApp", () => {
     expect(await screen.findByText(/research_agent_failed/i)).toBeInTheDocument();
     expect(screen.getByText(/req-123/i)).toBeInTheDocument();
     expect(screen.getByText(/retryable/i)).toBeInTheDocument();
+  });
+
+  test("exposes queued batch research and opens completed queue results", async () => {
+    const queuedResponse = {
+      jobs: [
+        {
+          id: "job-one",
+          requestId: "req-one",
+          articleUrl: "https://news.example/one",
+          status: "queued",
+          position: 1,
+          createdAt: "2026-05-07T00:00:00.000Z",
+          updatedAt: "2026-05-07T00:00:00.000Z",
+          startedAt: null,
+          finishedAt: null,
+          result: null,
+          error: null,
+        },
+        {
+          id: "job-two",
+          requestId: "req-two",
+          articleUrl: "https://news.example/two",
+          status: "succeeded",
+          position: null,
+          createdAt: "2026-05-07T00:00:00.000Z",
+          updatedAt: "2026-05-07T00:02:00.000Z",
+          startedAt: "2026-05-07T00:01:00.000Z",
+          finishedAt: "2026-05-07T00:02:00.000Z",
+          result: makeResearchResponse("https://news.example/two", "Queued summary ready for article two."),
+          error: null,
+        },
+      ],
+      queue: {
+        queued: 1,
+        running: 0,
+        succeeded: 1,
+        failed: 0,
+        active: 1,
+        total: 2,
+        concurrency: 1,
+        maxJobs: 100,
+        storage: "memory",
+      },
+    };
+    const fetchImpl = vi.fn<typeof fetch>().mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.includes("/research/history")) return jsonResponse(historyResponse());
+      if (url.includes("/research/jobs")) return jsonResponse(queuedResponse, url.includes("include=raw") ? 202 : 200);
+      return jsonResponse({ error: "unexpected_url", message: url }, 500);
+    });
+
+    render(React.createElement(NewsResearchApp, { fetchImpl }));
+
+    fireEvent.click(screen.getByRole("button", { name: /queue batch/i }));
+    fireEvent.change(screen.getByLabelText(/article urls/i), {
+      target: { value: "https://news.example/one\nhttps://news.example/two" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /queue article research/i }));
+
+    await waitFor(() => {
+      expect(fetchImpl).toHaveBeenCalledWith(
+        "/research/jobs?include=raw",
+        expect.objectContaining({
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ articleUrls: ["https://news.example/one", "https://news.example/two"] }),
+        })
+      );
+    });
+    expect(await screen.findByText(/Queued 2 article research jobs/i)).toBeInTheDocument();
+    expect(screen.getByText(/1 active/i)).toBeInTheDocument();
+    expect(screen.getByText(/Position 1/i)).toBeInTheDocument();
+    expect(screen.getByText(/Queued summary ready for article two/i)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /open result/i }));
+
+    expect(screen.getByText(/Where the pro and contra takes meet/i)).toBeInTheDocument();
+    expect(screen.getAllByText(/Queued summary ready for article two/i)).not.toHaveLength(0);
   });
 
   test("renders markdown emphasis in research output instead of raw markers", async () => {
